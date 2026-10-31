@@ -293,8 +293,8 @@ class BenchmarkRunner:
         if init == "wrong":
             filt.set_prior_pose(
                 self._wrong_pose(seq.map, gt0),
-                sigma_xy=20.0,
-                sigma_yaw=float(np.deg2rad(10.0)),
+                sigma_xy=200.0,
+                sigma_yaw=float(np.deg2rad(60.0)),
             )
         elif init == "oracle":
             filt.set_prior_pose(Pose(float(seq.gt_xy[0, 0]), float(seq.gt_xy[0, 1]), gt0.yaw))
@@ -334,8 +334,8 @@ class BenchmarkRunner:
                     model.grid,
                     p0,
                     device,
-                    sigma_xy=20.0,
-                    sigma_yaw=float(np.deg2rad(10.0)),
+                    sigma_xy=200.0,
+                    sigma_yaw=float(np.deg2rad(60.0)),
                 )
             else:
                 p0 = Pose(float(seq.gt_xy[0, 0]), float(seq.gt_xy[0, 1]), gt0.yaw)

@@ -126,10 +126,10 @@ class PoseGrid:
     def to(self, device=None, dtype=torch.float32) -> dict[str, torch.Tensor]:
         xs, ys, yaws = self.volume_coords()
         return {
-            "x": torch.as_tensor(xs, dtype=dtype, device=device),
-            "y": torch.as_tensor(ys, dtype=dtype, device=device),
-            "yaw": torch.as_tensor(yaws, dtype=dtype, device=device),
-            "yaws": torch.as_tensor(self.yaws, dtype=dtype, device=device),
+            "x": torch.as_tensor(np.array(xs, copy=True), dtype=dtype, device=device),
+            "y": torch.as_tensor(np.array(ys, copy=True), dtype=dtype, device=device),
+            "yaw": torch.as_tensor(np.array(yaws, copy=True), dtype=dtype, device=device),
+            "yaws": torch.as_tensor(np.array(self.yaws, copy=True), dtype=dtype, device=device),
         }
 
 

@@ -88,8 +88,11 @@ class ConvGRULocalizer(nn.Module):
 
     def _context(self, features: torch.Tensor | None, b: int, device) -> torch.Tensor:
         ly, ly2, lx = self.latent_shape
-        if self.feature_proj is None or features is None:
+        if self.feature_proj is None:
             return torch.zeros((b, 0, ly, ly2, lx), device=device)
+        if features is None:
+            # Prior/burn-in step: keep the channel layout but no context.
+            return torch.zeros((b, self.context_ch, ly, ly2, lx), device=device)
         pooled = features.mean(dim=(-2, -1))  # B,C
         ctx = self.feature_proj(pooled)  # B,context_ch
         return ctx[:, :, None, None, None].expand(-1, -1, ly, ly2, lx)
