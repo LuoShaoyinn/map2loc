@@ -1,4 +1,4 @@
-"""Fixed-map localization observation infra.
+"""bev2loc: fixed-map localization observation infrastructure.
 
 See ``README.md`` for the coordinate conventions and usage examples.
 """

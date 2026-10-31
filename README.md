@@ -1,4 +1,4 @@
-# F3 fixed-map localization — observation infra
+# bev2loc — fixed-map localization observation infra
 
 A known bird's-eye-view map (e.g. `res/example.png`) is given. At test time the
 agent only ever sees a small, heavily degraded patch of it. This package builds
@@ -7,19 +7,19 @@ observation windows, and realistic geometric + photometric corruptions. No
 model is included yet.
 
 ```
-res/example.png          the fixed map
-f3loc/map.py             map loading, coordinate frames, regions
-f3loc/trajectory.py      smooth waypoint / random-walk pose sequences
-f3loc/observation.py     crop windows out of the map, exact ground truth
-f3loc/augment.py         scale, aspect, shear, perspective, noise, scratches
-f3loc/dataset.py         on-the-fly torch Datasets (single frame / sequence)
-f3loc/visualize.py       preview renders for sanity checks
-outputs/                 previews and other generated artefacts (gitignored)
-tests/                   local geometry / determinism / dataset tests (gitignored)
-scripts/                 one-off helper scripts (gitignored)
+res/example.png              the fixed map
+bev2loc/map.py               map loading, coordinate frames, regions
+bev2loc/trajectory.py        smooth waypoint / random-walk pose sequences
+bev2loc/observation.py       crop windows out of the map, exact ground truth
+bev2loc/augment.py           scale, aspect, shear, perspective, noise, scratches
+bev2loc/dataset.py           on-the-fly torch Datasets (single frame / sequence)
+bev2loc/visualize.py         preview renders for sanity checks
+outputs/                     previews and other generated artefacts (gitignored)
+tests/                       local geometry / determinism / dataset tests (gitignored)
+scripts/                     one-off helper scripts (gitignored)
 ```
 
-Only `res/example.png` and the `f3loc` package are tracked; generated outputs,
+Only `res/example.png` and the `bev2loc` package are tracked; generated outputs,
 tests and scratch scripts stay local.
 
 ## Quick start (uv)
@@ -27,7 +27,7 @@ tests and scratch scripts stay local.
 ```bash
 # ROCm machine (this repo was developed on one)
 uv sync --extra rocm
-uv run --extra rocm python -m f3loc preview --out-dir outputs/previews
+uv run --extra rocm python -m bev2loc preview --out-dir outputs/previews
 uv run --extra rocm pytest
 ```
 
@@ -68,7 +68,7 @@ Preview outputs:
 
 ```python
 import numpy as np
-from f3loc import (
+from bev2loc import (
     FixedMap, InfraConfig, GeometryConfig, ObservationGenerator,
     PoseDataset, TrajectoryDataset, generate_trajectory,
 )

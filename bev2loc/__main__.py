@@ -4,7 +4,7 @@ import argparse
 
 
 def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(prog="f3loc", description="Fixed-map localization infra")
+    parser = argparse.ArgumentParser(prog="bev2loc", description="bev2loc observation infra")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("preview", help="render trajectory / observation previews")
