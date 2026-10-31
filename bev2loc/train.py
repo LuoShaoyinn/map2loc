@@ -331,7 +331,7 @@ def train_rnn(args) -> Path:
         opt.step()
         if step % args.log_every == 0 or step == 1:
             print(
-                f"rnn step {step:5d}  nll {float(loss):8.4f}  {time.time()-t0:6.1f}s",
+                f"rnn step {step:5d}  nll {float(loss.detach()):8.4f}  {time.time()-t0:6.1f}s",
                 flush=True,
             )
         if step % args.save_every == 0:
