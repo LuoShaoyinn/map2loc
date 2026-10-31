@@ -69,8 +69,12 @@ class PoseDataset(Dataset):
         seed: int = 0,
         split: str = "train",
         region: Region | None = None,
+        geometry: bool = True,
+        photometric: bool = True,
     ):
         self.cfg = cfg or InfraConfig()
+        self.geometry = bool(geometry)
+        self.photometric = bool(photometric)
         self.map = (
             map_path if isinstance(map_path, FixedMap) else FixedMap(map_path)
         )
@@ -95,12 +99,15 @@ class PoseDataset(Dataset):
             _seed(self.seed, self.split_offset, index)
         )
         pose = self.map.random_pose(rng, self.region)
-        return self.generator.generate(pose, rng)
+        return self.generator.generate(
+            pose, rng, geometry=self.geometry, photometric=self.photometric
+        )
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         obs = self.sample(index)
         item: dict[str, Any] = {
             "image": _to_tensor_image(obs.image, self.cfg),
+            "valid_mask": torch.from_numpy(obs.valid_mask.astype(np.float32)),
             "index": torch.tensor(index, dtype=torch.long),
         }
         item.update(_targets(obs, self.map))
@@ -129,8 +136,12 @@ class TrajectoryDataset(Dataset):
         seed: int = 0,
         split: str = "train",
         region: Region | None = None,
+        geometry: bool = True,
+        photometric: bool = True,
     ):
         self.cfg = cfg or InfraConfig()
+        self.geometry = bool(geometry)
+        self.photometric = bool(photometric)
         self.map = (
             map_path if isinstance(map_path, FixedMap) else FixedMap(map_path)
         )
@@ -165,14 +176,24 @@ class TrajectoryDataset(Dataset):
             region=self.region,
         )
         pose_list = traj[:: self.step_stride][: self.seq_len]
-        obs_list = [self.generator.generate(p, rng) for p in pose_list]
+        obs_list = [
+            self.generator.generate(
+                p, rng, geometry=self.geometry, photometric=self.photometric
+            )
+            for p in pose_list
+        ]
         images = torch.stack(
             [_to_tensor_image(o.image, self.cfg) for o in obs_list], dim=0
+        )
+        valid_masks = torch.stack(
+            [torch.from_numpy(o.valid_mask.astype(np.float32)) for o in obs_list],
+            dim=0,
         )
         targets = [_targets(o, self.map) for o in obs_list]
 
         return {
             "images": images,  # (T, 3, H, W)
+            "valid_masks": valid_masks,  # (T, H, W)
             "pos": torch.stack([t["pos"] for t in targets]),  # (T, 2)
             "pos_px": torch.stack([t["pos_px"] for t in targets]),
             "yaw": torch.stack([t["yaw"] for t in targets]),

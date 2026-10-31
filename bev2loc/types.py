@@ -61,6 +61,9 @@ class Observation:
     warp: np.ndarray  # (3, 3) obs pixel -> map pixel homography
     aug: Augmentation = field(default_factory=Augmentation)
     photo: dict[str, Any] = field(default_factory=dict)
+    # (H, W) float mask, 1 = trustworthy map content, 0 = unreliable
+    # (out of map, scratch / smudge / occlusion / saturated outlier).
+    valid_mask: np.ndarray | None = None
 
     @property
     def gt_position(self) -> np.ndarray:
@@ -75,6 +78,9 @@ class Observation:
             "corners": self.corners,
             "aug": self.aug.as_dict(),
             "photo": self.photo,
+            "valid_frac": None
+            if self.valid_mask is None
+            else float(np.mean(self.valid_mask)),
         }
 
 

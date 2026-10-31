@@ -38,6 +38,7 @@ class ObservationGenerator:
         self.width = self.geometry.obs_width
         self.height = self.geometry.obs_height
         self._border_value = tuple(int(round(v)) for v in map_.background.tolist())
+        self._map_ones = np.ones((map_.height, map_.width), dtype=np.uint8)
 
     # ------------------------------------------------------------------ warp
     def view_to_map(self, pose: Pose) -> np.ndarray:
@@ -81,7 +82,7 @@ class ObservationGenerator:
             self.map.image,
             h_total,
             (self.width, self.height),
-            flags=cv2.INTER_LINEAR,
+            flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
             borderMode=mode,
             borderValue=value,
         )
@@ -130,14 +131,28 @@ class ObservationGenerator:
         h_total = self.view_to_map(pose) @ h_geom
         image = self._warp(h_total)
 
+        # Which observation pixels actually sample the known map?  Border
+        # padding is not real map content even when it is colour-matched.
+        geom_valid = cv2.warpPerspective(
+            self._map_ones,
+            h_total,
+            (self.width, self.height),
+            flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        ).astype(np.float32)
+
         photo: dict = {"enabled": False}
+        valid_mask = geom_valid
         if photometric:
-            image, photo = corrupt(
+            image, photo, photo_valid = corrupt(
                 image,
                 rng,
                 self.photometric,
                 background=self.map.background,
+                return_mask=True,
             )
+            valid_mask = geom_valid * photo_valid
 
         corners = _apply_h(
             h_total,
@@ -164,6 +179,7 @@ class ObservationGenerator:
             warp=h_total,
             aug=aug,
             photo=photo,
+            valid_mask=valid_mask.astype(np.float32),
         )
 
     def generate_many(

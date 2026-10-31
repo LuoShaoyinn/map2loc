@@ -18,6 +18,8 @@ rocm = ["torch", "triton"]
 
 [project.scripts]
 bev2loc-preview = "bev2loc.visualize:main"
+bev2loc-train = "bev2loc.train:main"
+bev2loc-evaluate = "bev2loc.evaluate:main"
 
 [dependency-groups]
 dev = ["pytest"]

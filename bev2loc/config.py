@@ -70,6 +70,14 @@ class PhotometricConfig:
     dust_count: tuple[int, int] = (0, 25)
     smudge_prob: float = 0.35
 
+    # Large occluders (e.g. a hand, a pole, a passing object).  These are
+    # explicitly marked invalid so an observation model can learn to ignore
+    # them instead of hallucinating map structure.
+    occlusion_prob: float = 0.15
+    occlusion_count: tuple[int, int] = (1, 3)
+    occlusion_frac: tuple[float, float] = (0.05, 0.22)  # fraction of the image
+    occlusion_alpha: tuple[float, float] = (0.65, 1.0)
+
     # Final image compression artefacts.
     jpeg_prob: float = 0.4
     jpeg_quality: tuple[int, int] = (30, 90)

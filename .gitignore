@@ -13,6 +13,7 @@ htmlcov/
 outputs/
 tests/
 scripts/
+refs/
 
 # --- Editor / harness state -------------------------------------------------
 .opencode/

@@ -14,8 +14,31 @@ from .dataset import (
     TrajectoryDataset,
     localization_collate,
 )
+from .evaluation import (
+    BenchmarkConfig,
+    BenchmarkRunner,
+    Scenario,
+    build_map_split,
+    build_map_split_from_paths,
+    corruption_level,
+    default_scenarios,
+    ego_motion_from_poses,
+    render_sequence,
+    save_results,
+)
 from .map import FixedMap, Region
+from .matching import (
+    ClassicalNCCMatcher,
+    LearnedMatcher,
+    LearnedMatcherConfig,
+    LikelihoodVolume,
+    MapEncoder,
+    ObservationEncoder,
+    PoseGrid,
+    map_raster,
+)
 from .observation import ObservationGenerator
+from .temporal import ConvGRULocalizer, FilterConfig, SE2HistogramFilter
 from .trajectory import generate_trajectory, sample_pose
 from .types import Augmentation, Observation, Pose, Trajectory
 
@@ -36,4 +59,28 @@ __all__ = [
     "Observation",
     "Pose",
     "Trajectory",
+    # matching
+    "ClassicalNCCMatcher",
+    "LearnedMatcher",
+    "LearnedMatcherConfig",
+    "LikelihoodVolume",
+    "MapEncoder",
+    "ObservationEncoder",
+    "PoseGrid",
+    "map_raster",
+    # temporal
+    "FilterConfig",
+    "SE2HistogramFilter",
+    "ConvGRULocalizer",
+    # evaluation
+    "BenchmarkConfig",
+    "BenchmarkRunner",
+    "Scenario",
+    "build_map_split",
+    "build_map_split_from_paths",
+    "corruption_level",
+    "default_scenarios",
+    "ego_motion_from_poses",
+    "render_sequence",
+    "save_results",
 ]
