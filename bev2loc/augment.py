@@ -159,12 +159,13 @@ def _illumination(img: np.ndarray, rng: np.random.Generator, cfg: PhotometricCon
 
 def _noise(
     img: np.ndarray, rng: np.random.Generator, cfg: PhotometricConfig
-) -> tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, dict, np.ndarray]:
     sigma = float(rng.uniform(*cfg.gauss_sigma))
     out = img
     if sigma > 1e-3:
         out = out + rng.normal(0.0, sigma, size=out.shape).astype(np.float32)
 
+    valid = np.ones(out.shape[:2], dtype=np.float32)
     sp = float(rng.uniform(*cfg.salt_pepper))
     if sp > 1e-6:
         mask = rng.random(out.shape[:2]) < sp
@@ -173,8 +174,9 @@ def _noise(
         pepper = mask & ~salt
         out[salt] = 255.0
         out[pepper] = 0.0
+        valid[mask] = 0.0
 
-    return np.clip(out, 0.0, 255.0), {"gauss_sigma": sigma, "salt_pepper": sp}
+    return np.clip(out, 0.0, 255.0), {"gauss_sigma": sigma, "salt_pepper": sp}, valid
 
 
 def _scratches(
@@ -182,12 +184,13 @@ def _scratches(
     rng: np.random.Generator,
     cfg: PhotometricConfig,
     background: np.ndarray | None,
-) -> tuple[np.ndarray, dict]:
+) -> tuple[np.ndarray, dict, np.ndarray]:
     h, w = img.shape[:2]
     diag = float(np.hypot(w, h))
     # OpenCV's drawing routines work on uint8, so paint there and blend later.
     overlay = np.zeros((h, w, 3), dtype=np.uint8)
     alpha = np.zeros((h, w), dtype=np.uint8)
+    valid = np.ones((h, w), dtype=np.float32)
 
     n_scratch = int(rng.integers(cfg.scratch_count[0], cfg.scratch_count[1] + 1))
     bg = background if background is not None else np.array([60, 120, 60], dtype=np.float32)
@@ -233,6 +236,7 @@ def _scratches(
     out = img * (1.0 - alpha[..., None] / 255.0) + overlay.astype(np.float32) * (
         alpha[..., None] / 255.0
     )
+    valid[alpha > 20] = 0.0
 
     # smudges: soft dark/light blobs, e.g. fingerprints on the lens
     n_smudge = 0
@@ -252,12 +256,55 @@ def _scratches(
         sm_overlay_f = cv2.GaussianBlur(sm_overlay, (0, 0), sigmaX=sigma).astype(np.float32) / 255.0
         sm_alpha_f = cv2.GaussianBlur(sm_alpha, (0, 0), sigmaX=sigma).astype(np.float32)[..., None] / 255.0
         out = out * (1.0 - sm_alpha_f) + sm_overlay_f * 255.0 * sm_alpha_f
+        valid[sm_alpha_f[..., 0] > 0.05] = 0.0
 
     return np.clip(out, 0.0, 255.0), {
         "n_scratch": n_scratch,
         "n_dust": n_dust,
         "n_smudge": n_smudge,
-    }
+    }, valid
+
+
+def _occlusions(
+    img: np.ndarray,
+    rng: np.random.Generator,
+    cfg: PhotometricConfig,
+) -> tuple[np.ndarray, dict, np.ndarray]:
+    """Paint opaque low-texture blobs and mark them unreliable."""
+    if rng.random() >= cfg.occlusion_prob:
+        return img, {"n_occlusion": 0}, np.ones(img.shape[:2], dtype=np.float32)
+
+    h, w = img.shape[:2]
+    out = img.astype(np.float32)
+    valid = np.ones((h, w), dtype=np.float32)
+    n = int(rng.integers(cfg.occlusion_count[0], cfg.occlusion_count[1] + 1))
+    for _ in range(n):
+        f = float(rng.uniform(*cfg.occlusion_frac))
+        ow = max(4, int(round(w * np.sqrt(f) * rng.uniform(0.6, 1.4))))
+        oh = max(4, int(round(h * np.sqrt(f) * rng.uniform(0.6, 1.4))))
+        ow, oh = min(ow, w), min(oh, h)
+        x0 = int(rng.integers(0, max(1, w - ow)))
+        y0 = int(rng.integers(0, max(1, h - oh)))
+        # Most occluders are dark/neutral; a few are bright.
+        if rng.random() < 0.75:
+            colour = rng.uniform(5, 70, size=3)
+        else:
+            colour = rng.uniform(170, 245, size=3)
+        a = float(rng.uniform(*cfg.occlusion_alpha))
+        # Rounded rectangle gives a more natural object silhouette.
+        patch = np.zeros((oh, ow, 3), dtype=np.float32) + colour
+        mask = np.zeros((oh, ow), dtype=np.float32)
+        cv2.rectangle(mask, (0, 0), (ow - 1, oh - 1), 1.0, -1)
+        k = max(1, min(ow, oh) // 5)
+        if k > 1:
+            mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=k)
+        mask = np.clip(mask * a, 0.0, 1.0)
+        region = out[y0 : y0 + oh, x0 : x0 + ow]
+        out[y0 : y0 + oh, x0 : x0 + ow] = region * (1.0 - mask[..., None]) + patch * mask[..., None]
+        vpatch = valid[y0 : y0 + oh, x0 : x0 + ow]
+        valid[y0 : y0 + oh, x0 : x0 + ow] = vpatch * (1.0 - mask)
+
+    return np.clip(out, 0.0, 255.0), {"n_occlusion": n}, valid
 
 
 def _jpeg(
@@ -281,13 +328,22 @@ def corrupt(
     cfg: PhotometricConfig,
     *,
     background: np.ndarray | None = None,
-) -> tuple[np.ndarray, dict]:
-    """Apply a random photometric degradation chain to an RGB uint8 image."""
+    return_mask: bool = False,
+):
+    """Apply a random photometric degradation chain to an RGB uint8 image.
+
+    When ``return_mask`` is true, also returns a ``(H, W)`` float32 mask where
+    1 marks trustworthy map content and 0 marks pixels corrupted by
+    salt-and-pepper noise, scratches/dust/smudges or occluders.
+    """
     if not cfg.enabled:
+        if return_mask:
+            return image.copy(), {"enabled": False}, np.ones(image.shape[:2], dtype=np.float32)
         return image.copy(), {"enabled": False}
 
     info: dict = {"enabled": True}
     out = image.astype(np.float32)
+    valid = np.ones(image.shape[:2], dtype=np.float32)
 
     if rng.random() < cfg.blur_prob:
         out, k = _gaussian_blur(out, rng, cfg)
@@ -296,17 +352,27 @@ def corrupt(
     out, illum = _illumination(out, rng, cfg)
     info.update(illum)
 
-    out, noise = _noise(out, rng, cfg)
+    out, noise, vmask = _noise(out, rng, cfg)
     info.update(noise)
+    valid *= vmask
 
     if rng.random() < cfg.scratch_prob:
-        out, scr = _scratches(out, rng, cfg, background)
+        out, scr, vmask = _scratches(out, rng, cfg, background)
         info.update(scr)
+        valid *= vmask
     else:
         info.update({"n_scratch": 0, "n_dust": 0, "n_smudge": 0})
+
+    out, occ, vmask = _occlusions(out, rng, cfg)
+    info.update(occ)
+    valid *= vmask
 
     out, q = _jpeg(out, rng, cfg)
     if q is not None:
         info["jpeg_quality"] = q
 
-    return np.clip(out, 0, 255).astype(np.uint8), info
+    info["valid_frac"] = float(valid.mean())
+    result = np.clip(out, 0, 255).astype(np.uint8)
+    if return_mask:
+        return result, info, valid
+    return result, info
