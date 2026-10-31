@@ -211,6 +211,8 @@ class BenchmarkRunner:
                 latent_yaw=rcfg.get("latent_yaw", 8),
                 latent_xy=rcfg.get("latent_xy", 24),
                 num_layers=rcfg.get("num_layers", 1),
+                spatial_residual=rcfg.get("spatial_residual", True),
+                yaw_residual=rcfg.get("yaw_residual", True),
             )
             model.load_state_dict(ckpt["state_dict"])
             model.to(self.device).eval()

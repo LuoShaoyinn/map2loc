@@ -52,11 +52,15 @@ class ConvGRULocalizer(nn.Module):
         latent_yaw: int = 8,
         latent_xy: int = 24,
         num_layers: int = 1,
+        spatial_residual: bool = True,
+        yaw_residual: bool = True,
     ):
         super().__init__()
         self.grid = grid
         self.latent_shape = (latent_yaw, latent_xy, latent_xy)
         self.context_ch = int(context_ch)
+        self.spatial_residual = bool(spatial_residual)
+        self.yaw_residual = bool(yaw_residual)
         self.feature_proj = (
             nn.Linear(feature_dim, context_ch) if context_ch > 0 else None
         )
@@ -113,6 +117,10 @@ class ConvGRULocalizer(nn.Module):
         spatial = F.interpolate(
             spatial, size=(self.grid.ny, self.grid.nx), mode="bilinear", align_corners=False
         )
+        if not self.spatial_residual:
+            spatial = torch.zeros_like(spatial)
+        if not self.yaw_residual:
+            return spatial
         # Heading residual: (B,latent_yaw) -> (B,Y,1,1)
         yaw = self.yaw_head(x.mean(dim=(-2, -1)))  # B, latent_yaw
         yaw = F.interpolate(

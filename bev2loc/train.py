@@ -303,8 +303,14 @@ def train_rnn(args) -> Path:
         "latent_yaw": args.latent_yaw,
         "latent_xy": args.latent_xy,
         "num_layers": args.rnn_layers,
+        "spatial_residual": not args.no_spatial_residual,
+        "yaw_residual": not args.no_yaw_residual,
     }
     model = ConvGRULocalizer(grid, **rcfg).to(device)
+    if args.init_checkpoint:
+        init = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        model.load_state_dict(init["state_dict"])
+        print(f"initialised from {args.init_checkpoint}", flush=True)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -391,6 +397,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--latent-yaw", type=int, default=8)
     p.add_argument("--latent-xy", type=int, default=24)
     p.add_argument("--rnn-layers", type=int, default=1)
+    p.add_argument("--no-spatial-residual", action="store_true",
+                   help="disable the coarse spatial residual (unstable at eval time)")
+    p.add_argument("--no-yaw-residual", action="store_true",
+                   help="disable the heading residual")
     p.add_argument("--log-every", type=int, default=10)
     p.add_argument("--save-every", type=int, default=100)
     p.add_argument("--device", default="auto")

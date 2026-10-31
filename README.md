@@ -108,9 +108,13 @@ implemented.
 ### RNN baseline
 
 `ConvGRULocalizer` runs a ConvGRU over a coarse learned likelihood volume plus
-globally pooled observation features. It predicts spatial and heading residuals
-on the same grid and is trained with pose NLL while the observation encoder is
-frozen.
+globally pooled observation features and is trained with pose NLL while the
+observation encoder is frozen. The recurrent state refines the heading
+distribution of every frame. The optional coarse spatial-residual head is
+disabled for the final checkpoint: at evaluation time over long trajectories it
+was strong enough to flip the argmax away from a good per-frame peak, whereas
+the heading refinement is stable. Temporal position fusion is left to the
+histogram filter, which uses ego-motion explicitly.
 
 ## Training
 
@@ -136,6 +140,13 @@ python -m bev2loc.train --mode rnn --generator tensor \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
     --steps 1200 --batch-size 2 --seq-len 8 --step-stride 6 \
     --out outputs/checkpoints/rnn.pt
+
+# stable heading-refining variant (spatial residual disabled)
+python -m bev2loc.train --mode rnn --generator tensor \
+    --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
+    --init-checkpoint outputs/checkpoints/rnn.pt --no-spatial-residual \
+    --steps 900 --batch-size 2 --seq-len 12 --step-stride 6 \
+    --out outputs/checkpoints/rnn_yaw.pt
 ```
 
 Training logs report NLL, reliability-mask loss and training top-1 bin accuracy.
