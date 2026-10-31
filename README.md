@@ -134,7 +134,7 @@ python -m bev2loc.train --mode observation --generator tensor \
 # 2. ConvGRU on frozen observation features
 python -m bev2loc.train --mode rnn --generator tensor \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
-    --steps 1000 --batch-size 2 --seq-len 6 --step-stride 6 \
+    --steps 1200 --batch-size 2 --seq-len 8 --step-stride 6 \
     --out outputs/checkpoints/rnn.pt
 ```
 
@@ -162,7 +162,9 @@ Scenarios in `default_scenarios()` cover:
 * scratches, occlusions and strong geometric warping;
 * an unseen structural map variant (`rot90`);
 * an unseen spatial region of the training map;
-* global initialization with a deliberately wrong prior;
+* global initialization with a deliberately wrong prior (a broad
+  200 px / 60° prior centred on the mirrored pose, so temporal methods can
+  recover rather than being trapped by a confident prior);
 * recovery after five distractor frames from the wrong place.
 
 Metrics include mean / median / p90 position and heading error, success rates at
