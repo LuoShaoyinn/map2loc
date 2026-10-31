@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -173,6 +173,21 @@ class BenchmarkRunner:
         if key not in self._learned:
             ckpt = torch.load(self.learned_checkpoint, map_location="cpu", weights_only=False)
             lcfg = LearnedMatcherConfig.from_dict(ckpt["config"])
+            if (
+                abs(lcfg.fov_px - self.cfg.fov_px) > 1e-3
+                or lcfg.obs_width != self.cfg.obs_width
+                or lcfg.obs_height != self.cfg.obs_height
+                or abs(lcfg.grid_resolution - self.cfg.grid_resolution) > 1e-6
+                or lcfg.n_yaw != self.cfg.n_yaw
+            ):
+                raise ValueError(
+                    "evaluation geometry must match the learned checkpoint: "
+                    f"checkpoint fov/obs/res/yaw="
+                    f"{lcfg.fov_px}/{lcfg.obs_width}/{lcfg.grid_resolution}/{lcfg.n_yaw}, "
+                    f"benchmark fov/obs/res/yaw="
+                    f"{self.cfg.fov_px}/{self.cfg.obs_width}/"
+                    f"{self.cfg.grid_resolution}/{self.cfg.n_yaw}"
+                )
             model = LearnedMatcher(lcfg, self.grid_for(map_))
             model.load_state_dict(ckpt["state_dict"])
             model.to(self.device).eval()
@@ -276,7 +291,11 @@ class BenchmarkRunner:
         )
         gt0 = Pose(*[float(v) for v in seq.poses[0]])
         if init == "wrong":
-            filt.set_prior_pose(self._wrong_pose(seq.map, gt0))
+            filt.set_prior_pose(
+                self._wrong_pose(seq.map, gt0),
+                sigma_xy=20.0,
+                sigma_yaw=float(np.deg2rad(10.0)),
+            )
         elif init == "oracle":
             filt.set_prior_pose(Pose(float(seq.gt_xy[0, 0]), float(seq.gt_xy[0, 1]), gt0.yaw))
         rng = np.random.default_rng(seed + 9001)
@@ -311,9 +330,16 @@ class BenchmarkRunner:
             gt0 = Pose(*[float(v) for v in seq.poses[0]])
             if init == "wrong":
                 p0 = self._wrong_pose(seq.map, gt0)
+                prior = self._pose_logits(
+                    model.grid,
+                    p0,
+                    device,
+                    sigma_xy=20.0,
+                    sigma_yaw=float(np.deg2rad(10.0)),
+                )
             else:
                 p0 = Pose(float(seq.gt_xy[0, 0]), float(seq.gt_xy[0, 1]), gt0.yaw)
-            prior = self._pose_logits(model.grid, p0, device)
+                prior = self._pose_logits(model.grid, p0, device)
             _, hidden = model.step(prior, None, hidden)
         estimates = []
         with torch.no_grad():
@@ -330,13 +356,21 @@ class BenchmarkRunner:
                 estimates.append(model.grid.pose_at(iyaw, iy, ix))
         return estimates
 
-    def _pose_logits(self, grid: PoseGrid, pose: Pose, device) -> torch.Tensor:
+    def _pose_logits(
+        self,
+        grid: PoseGrid,
+        pose: Pose,
+        device,
+        *,
+        sigma_xy: float = 3.0,
+        sigma_yaw: float = float(np.deg2rad(6.0)),
+    ) -> torch.Tensor:
         coords = grid.to(device)
         d2 = (coords["x"] - pose.x) ** 2 + (coords["y"] - pose.y) ** 2
         dyaw = torch.atan2(
             torch.sin(coords["yaw"] - pose.yaw), torch.cos(coords["yaw"] - pose.yaw)
         )
-        lp = -0.5 * d2 / (3.0**2) - 0.5 * dyaw**2 / (np.deg2rad(6.0) ** 2)
+        lp = -0.5 * d2 / (sigma_xy**2) - 0.5 * dyaw**2 / (sigma_yaw**2)
         lp = torch.log_softmax(lp.flatten(), dim=0).reshape(lp.shape)
         return lp[None]
 
@@ -349,6 +383,12 @@ class BenchmarkRunner:
             else self.split.seen_region
         )
         corruption = corruption_level(sc.corruption)
+        corruption.cfg.geometry = replace(
+            corruption.cfg.geometry,
+            obs_width=self.cfg.obs_width,
+            obs_height=self.cfg.obs_height,
+            fov_px=self.cfg.fov_px,
+        )
         distractor_map = None
         return render_sequence(
             map_,

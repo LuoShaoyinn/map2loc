@@ -9,6 +9,7 @@ Example::
 from __future__ import annotations
 
 import argparse
+import copy
 from pathlib import Path
 
 from .evaluation.protocols import build_map_split
@@ -29,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--rnn-checkpoint", default=None)
     p.add_argument("--out", default="outputs/eval/results.json")
     p.add_argument("--scenarios", nargs="*", default=None)
+    p.add_argument("--repeats", type=int, default=1,
+                   help="independent trajectory seeds per scenario")
     p.add_argument("--seq-len", type=int, default=40)
     p.add_argument("--resolution", type=float, default=8.0)
     p.add_argument("--n-yaw", type=int, default=64)
@@ -76,6 +79,14 @@ def main(argv=None) -> None:
     if args.scenarios:
         wanted = set(args.scenarios)
         scenarios = [s for s in scenarios if s.name in wanted]
+    if args.repeats > 1:
+        expanded = []
+        for sc in scenarios:
+            for r in range(args.repeats):
+                rep = copy.deepcopy(sc)
+                rep.seed = sc.seed + 1000 * r
+                expanded.append(rep)
+        scenarios = expanded
     results = runner.run_all(scenarios)
     path = save_results(results, args.out)
     print(f"\nsaved {path}\n")

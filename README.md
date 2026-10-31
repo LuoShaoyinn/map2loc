@@ -152,6 +152,7 @@ same images and masks to every method.
 python -m bev2loc.evaluate \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
     --rnn-checkpoint outputs/checkpoints/rnn.pt \
+    --repeats 3 \
     --out outputs/eval/results.json
 ```
 

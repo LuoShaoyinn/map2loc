@@ -15,8 +15,10 @@ Then train the ConvGRU on frozen observation features::
 from __future__ import annotations
 
 import argparse
+import copy
 import itertools
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -116,8 +118,14 @@ def train_observation(args) -> Path:
         map_, resolution=args.resolution, n_yaw=args.n_yaw
     )
     level = corruption_level(args.corruption)
-    # The observation is rendered with the chosen corruption level.
-    cfg = level.cfg
+    # The observation renderer must use the same crop geometry as the model.
+    cfg = copy.deepcopy(level.cfg)
+    cfg.geometry = replace(
+        cfg.geometry,
+        obs_width=args.obs_size,
+        obs_height=args.obs_size,
+        fov_px=args.fov_px,
+    )
     lcfg = LearnedMatcherConfig(
         fov_px=args.fov_px,
         obs_width=args.obs_size,
@@ -249,19 +257,26 @@ def train_rnn(args) -> Path:
         map_feats = matcher.encode_map(data["image"])
 
     level = corruption_level(args.corruption)
+    cfg = copy.deepcopy(level.cfg)
+    cfg.geometry = replace(
+        cfg.geometry,
+        obs_width=args.obs_size,
+        obs_height=args.obs_size,
+        fov_px=args.fov_px,
+    )
     tgen = None
     if args.generator == "tensor":
         tgen = TensorObservationGenerator(
             map_.image,
-            level.cfg.geometry,
-            level.cfg.photometric,
+            cfg.geometry,
+            cfg.photometric,
             device=device,
         )
         it = _sequence_batches(args, device, split, level, tgen, args.seed)
     else:
         ds = TrajectoryDataset(
             map_,
-            level.cfg,
+            cfg,
             length=max(args.steps * args.batch_size + 16, 32),
             seq_len=args.seq_len,
             step_stride=args.step_stride,

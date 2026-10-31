@@ -38,6 +38,11 @@ from .matching import (
     map_raster,
 )
 from .observation import ObservationGenerator
+from .tensor_generator import (
+    TensorObservationGenerator,
+    TensorPoseSampler,
+    TensorTrajectorySampler,
+)
 from .temporal import ConvGRULocalizer, FilterConfig, SE2HistogramFilter
 from .trajectory import generate_trajectory, sample_pose
 from .types import Augmentation, Observation, Pose, Trajectory
@@ -53,6 +58,9 @@ __all__ = [
     "FixedMap",
     "Region",
     "ObservationGenerator",
+    "TensorObservationGenerator",
+    "TensorPoseSampler",
+    "TensorTrajectorySampler",
     "generate_trajectory",
     "sample_pose",
     "Augmentation",
