@@ -162,7 +162,7 @@ same images and masks to every method.
 ```bash
 python -m bev2loc.evaluate \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
-    --rnn-checkpoint outputs/checkpoints/rnn.pt \
+    --rnn-checkpoint outputs/checkpoints/rnn_yaw.pt \
     --repeats 3 \
     --out outputs/eval/results.json
 ```
@@ -182,6 +182,42 @@ Metrics include mean / median / p90 position and heading error, success rates at
 several thresholds, and the first frame after which the estimate stays within
 16 px / 10° for three consecutive frames (recovery). Results are JSON; a compact
 table is printed and `summary_table()` is available programmatically.
+
+### Reference results
+
+Three independent trajectory seeds per scenario, 40 frames each, with the
+checkpoints above. Each cell is **success@16 px / 10° / median position error**
+(median of the three repeats):
+
+| scenario | classical | classical+filter | learned | learned+filter | rnn |
+|---|---|---|---|---|---|
+| seen_clean | 43% / 222px | 61% / 6px | 88% / 5px | **94% / 4px** | 68% / 6px |
+| seen_mild | 31% / 313px | 20% / 560px | 82% / 8px | **99% / 5px** | 61% / 12px |
+| seen_moderate | 6% / 324px | 24% / 226px | 37% / 18px | **72% / 10px** | 29% / 30px |
+| seen_severe | 3% / 360px | 5% / 277px | 10% / 135px | **26% / 21px** | 7% / 195px |
+| scratches | 10% / 359px | 20% / 474px | 31% / 72px | **76% / 10px** | 26% / 119px |
+| occlusion | 9% / 379px | 28% / 305px | 22% / 102px | **86% / 7px** | 17% / 201px |
+| geometric | 0% / 348px | 0% / 335px | 5% / 225px | **19% / 24px** | 6% / 230px |
+| unseen_map_rot90 | 8% / 360px | 8% / 386px | 29% / 31px | **68% / 11px** | 22% / 165px |
+| unseen_region | 6% / 333px | **35% / 18px** | 0% / 529px | 0% / 522px | 5% / 500px |
+| wrong_global_init | 12% / 318px | 0% / 350px | 38% / 13px | **78% / 10px** | 20% / 149px |
+| recovery_distractor | 6% / 403px | 5% / 92px | 25% / 23px | **56% / 12px** | 19% / 26px |
+
+The learned observation model dominates per-frame localization on clean and
+mild data, and the SE(2) filter adds the most under moderate/severe corruption,
+scratches and occlusions (e.g. 86% success under occlusion versus 22% per
+frame). The filter also recovers from a deliberately wrong prior, while
+per-frame decoding cannot. The RNN baseline is stable but does not beat the
+filter; with a coarse spatial residual it could lock onto wrong modes, so the
+released checkpoint refines heading only.
+
+Two limitations are visible in the table. `geometric` is hard for every method
+because the perspective warp violates the planar BEV crop assumption. On
+`unseen_region` the learned matcher locks onto the 180°-rotated copy of the
+pitch (median yaw ≈ 170°); that region is nearly symmetric with the training
+region, so the observation alone is genuinely ambiguous, and a consistently
+wrong observation cannot be fixed by temporal fusion. Less symmetric maps (or a
+map-context/sequence-level matcher) are needed there.
 
 For a true unseen-map evaluation, use
 `build_map_split_from_paths(train_path, [eval_path, ...])`; with only one map the
