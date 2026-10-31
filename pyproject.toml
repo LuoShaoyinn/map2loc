@@ -1,9 +1,9 @@
 [project]
 name = "bev2loc"
 version = "0.1.0"
-description = "bev2loc: procedural trajectories and corrupted BEV observations"
+description = "bev2loc: BEV-to-map localization with classical, learned and temporal baselines"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12"
 
 dependencies = [
     "numpy",

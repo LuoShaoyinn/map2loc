@@ -48,6 +48,20 @@ def _make_generator(device: torch.device, seed: int) -> torch.Generator:
     return gen
 
 
+def _target_indices(grid: PoseGrid, pos_px: torch.Tensor, yaw: torch.Tensor) -> torch.Tensor:
+    """Flat volume indices of ground-truth poses (for train top-1 logging)."""
+    xs = pos_px[:, 0].detach().cpu().numpy()
+    ys = pos_px[:, 1].detach().cpu().numpy()
+    yaws = yaw.detach().cpu().numpy().reshape(-1)
+    idx = np.empty(len(xs), dtype=np.int64)
+    for i in range(len(xs)):
+        ix = int(np.clip(round(xs[i] / grid.resolution - 0.5), 0, grid.nx - 1))
+        iy = int(np.clip(round(ys[i] / grid.resolution - 0.5), 0, grid.ny - 1))
+        iyaw = int(round((yaws[i] + np.pi) / grid.dyaw)) % grid.n_yaw
+        idx[i] = (iyaw * grid.ny + iy) * grid.nx + ix
+    return torch.from_numpy(idx).to(pos_px.device)
+
+
 def _pose_batches(args, device, split, level, tgen, seed):
     """Infinite batches of tensor-rendered single-frame observations."""
     sampler = TensorPoseSampler(split.train_region, device=device)
@@ -115,6 +129,10 @@ def train_observation(args) -> Path:
         n_yaw=grid.n_yaw,
     )
     matcher = LearnedMatcher(lcfg, grid).to(device)
+    if args.init_checkpoint:
+        init = torch.load(args.init_checkpoint, map_location="cpu", weights_only=False)
+        matcher.load_state_dict(init["state_dict"])
+        print(f"initialised from {args.init_checkpoint}", flush=True)
     opt = torch.optim.AdamW(matcher.parameters(), lr=args.lr, weight_decay=1e-4)
 
     length = max(args.steps * args.batch_size + 16, 64)
@@ -166,6 +184,9 @@ def train_observation(args) -> Path:
         loss = nll + args.mask_weight * out.get(
             "mask_loss", torch.zeros((), device=device)
         )
+        top1 = (
+            out["logits"].flatten(1).argmax(1) == _target_indices(grid, pos_px, yaw)
+        ).float().mean()
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(matcher.parameters(), args.grad_clip)
@@ -174,9 +195,10 @@ def train_observation(args) -> Path:
         running = float(loss.detach()) if running is None else 0.95 * running + 0.05 * float(loss.detach())
         if step % args.log_every == 0 or step == 1:
             print(
-                f"step {step:5d}  loss {float(loss):8.4f}  nll {float(nll):8.4f}  "
+                f"step {step:5d}  loss {float(loss.detach()):8.4f}  "
+                f"nll {float(nll.detach()):8.4f}  "
                 f"mask {float(out.get('mask_loss', torch.zeros(()))):.4f}  "
-                f"avg {running:8.4f}  {time.time()-t0:6.1f}s",
+                f"top1 {float(top1):.3f}  avg {running:8.4f}  {time.time()-t0:6.1f}s",
                 flush=True,
             )
         if step % args.save_every == 0:
@@ -331,6 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--map-variants-dir", default="outputs/maps")
     p.add_argument("--out", required=True)
     p.add_argument("--learned-checkpoint", default=None)
+    p.add_argument("--init-checkpoint", default=None,
+                   help="initialise the observation model from a checkpoint")
     p.add_argument("--steps", type=int, default=300)
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--seq-len", type=int, default=6)

@@ -33,6 +33,7 @@ def summarize(
     pos_thresholds: tuple[float, ...] = (8.0, 16.0, 32.0),
     yaw_thresholds_deg: tuple[float, ...] = (5.0, 10.0, 20.0),
     recovery_hold: int = 3,
+    recovery_start: int = 0,
 ) -> dict:
     pos = errors["pos_px"]
     yaw = np.rad2deg(errors["yaw_rad"])
@@ -59,7 +60,7 @@ def summarize(
     yth = 10.0
     ok = (pos < pth) & (yaw < yth)
     recovery = None
-    for start in range(ok.size):
+    for start in range(int(recovery_start), max(int(recovery_start), ok.size)):
         if ok[start : start + recovery_hold].all() and start + recovery_hold <= ok.size:
             recovery = int(start)
             break

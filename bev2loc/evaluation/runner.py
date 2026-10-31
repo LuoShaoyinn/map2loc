@@ -350,10 +350,6 @@ class BenchmarkRunner:
         )
         corruption = corruption_level(sc.corruption)
         distractor_map = None
-        if sc.distractor_frames > 0:
-            distractor_map = self.split.eval_map(
-                "mirror" if "mirror" in self.split.eval_maps else sc.map_key
-            )
         return render_sequence(
             map_,
             corruption,
@@ -387,7 +383,7 @@ class BenchmarkRunner:
             "n_frames": len(seq.observations),
             "methods": {},
         }
-        gt_yaw = seq.poses[:, 2]
+        gt_yaw = seq.gt_yaw
         classical = self.classical_logits(seq)
         learned = features = None
         if self.learned_checkpoint is not None:
@@ -395,8 +391,11 @@ class BenchmarkRunner:
 
         def add(name: str, estimates: list[Pose], extra: dict | None = None):
             errs = sequence_errors(estimates, seq.gt_xy, gt_yaw)
+            summary = summarize(
+                errs, recovery_start=int(sc.distractor_frames)
+            )
             results["methods"][name] = {
-                **summarize(errs),
+                **summary,
                 "per_frame_pos_px": errs["pos_px"].tolist(),
                 "per_frame_yaw_deg": np.rad2deg(errs["yaw_rad"]).tolist(),
                 "estimates_xy_px": np.array([e.xy for e in estimates]).tolist(),
@@ -458,15 +457,17 @@ def save_results(results: dict[str, Any], path: str | Path) -> Path:
 def summary_table(results: dict[str, Any]) -> str:
     lines = [
         f"{'scenario':<22}{'method':<20}{'pos_med':>9}{'pos_p90':>9}"
-        f"{'yaw_med':>9}{'succ@16/10':>12}"
+        f"{'yaw_med':>9}{'succ@16/10':>12}{'recovery':>10}"
     ]
     lines.append("-" * len(lines[0]))
     for sc in results["scenarios"]:
         for name, m in sc["methods"].items():
             succ = m["success"].get("pos<16px_yaw<10deg", float("nan"))
+            rec = m.get("recovery_frame")
+            rec_s = "-" if rec is None else str(rec)
             lines.append(
                 f"{sc['scenario']['name']:<22}{name:<20}"
                 f"{m['pos_px_median']:>9.1f}{m['pos_px_p90']:>9.1f}"
-                f"{m['yaw_deg_median']:>9.2f}{succ:>12.3f}"
+                f"{m['yaw_deg_median']:>9.2f}{succ:>12.3f}{rec_s:>10}"
             )
     return "\n".join(lines)

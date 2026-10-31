@@ -319,6 +319,7 @@ class RenderedSequence:
     poses: np.ndarray  # (T, 3) ground-truth x, y, yaw
     observations: list[Observation]
     gt_xy: np.ndarray  # (T, 2) centre-of-observation target
+    gt_yaw: np.ndarray  # (T,) heading of the observation
     region: tuple[float, float, float, float]
     corruption: str
 
@@ -391,6 +392,7 @@ def render_sequence(
         poses=poses,
         observations=obs,
         gt_xy=np.stack(gt_xy).astype(np.float32),
+        gt_yaw=np.array([o.pose.yaw for o in obs], dtype=np.float32),
         region=traj.region,
         corruption=corruption.name,
     )
