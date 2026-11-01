@@ -275,7 +275,7 @@ class BenchmarkRunner:
             float((gt.yaw + np.pi + np.pi) % (2 * np.pi) - np.pi),
         )
 
-    def _filter_sequence(
+    def filter_volumes(
         self,
         grid: PoseGrid,
         seq: RenderedSequence,
@@ -283,12 +283,12 @@ class BenchmarkRunner:
         *,
         init: str,
         seed: int,
-    ) -> list[Pose]:
-        free = None
+    ) -> tuple[list[torch.Tensor], list[Pose]]:
+        """Per-frame filter posteriors (log volumes) and decoded poses."""
         filt = SE2HistogramFilter(
             grid,
             FilterConfig(),
-            free_mask=free,
+            free_mask=None,
             device=self.device,
         )
         gt0 = Pose(*[float(v) for v in seq.poses[0]])
@@ -301,6 +301,7 @@ class BenchmarkRunner:
         elif init == "oracle":
             filt.set_prior_pose(Pose(float(seq.gt_xy[0, 0]), float(seq.gt_xy[0, 1]), gt0.yaw))
         rng = np.random.default_rng(seed + 9001)
+        volumes: list[torch.Tensor] = []
         estimates: list[Pose] = []
         for t in range(len(seq.observations)):
             if t > 0 and self.cfg.use_ego_motion:
@@ -312,22 +313,34 @@ class BenchmarkRunner:
                 )
                 filt.predict(e)
             filt.update(logits[t])
+            volumes.append(filt.log_volume.detach().clone())
             estimates.append(filt.best())
-        return estimates
+        return volumes, estimates
 
-    def _rnn_sequence(
+    def _filter_sequence(
+        self,
+        grid: PoseGrid,
+        seq: RenderedSequence,
+        logits: torch.Tensor,
+        *,
+        init: str,
+        seed: int,
+    ) -> list[Pose]:
+        return self.filter_volumes(grid, seq, logits, init=init, seed=seed)[1]
+
+    def rnn_volumes(
         self,
         seq: RenderedSequence,
         logits: torch.Tensor,
         features: torch.Tensor,
         *,
         init: str,
-    ) -> list[Pose]:
+    ) -> tuple[list[torch.Tensor], list[Pose]]:
+        """Per-frame refined RNN volumes and decoded poses."""
         model = self._rnn_model(seq.map)
         device = self.device
         b = 1
         hidden = model.init_hidden(b, device)
-        prev = None
         if init in ("wrong", "oracle"):
             gt0 = Pose(*[float(v) for v in seq.poses[0]])
             if init == "wrong":
@@ -343,20 +356,31 @@ class BenchmarkRunner:
                 p0 = Pose(float(seq.gt_xy[0, 0]), float(seq.gt_xy[0, 1]), gt0.yaw)
                 prior = self._pose_logits(model.grid, p0, device)
             _, hidden = model.step(prior, None, hidden)
-        estimates = []
+        volumes: list[torch.Tensor] = []
+        estimates: list[Pose] = []
         with torch.no_grad():
             for t in range(logits.shape[0]):
                 x = logits[t : t + 1].to(device)
                 f = features[t : t + 1].to(device)
                 refined, hidden = model.step(x, f, hidden)
-                prev = refined
+                volumes.append(refined[0].detach().cpu().clone())
                 idx = int(refined.flatten().argmax())
                 nx, ny = model.grid.nx, model.grid.ny
                 ix = idx % nx
                 iy = (idx // nx) % ny
                 iyaw = idx // (nx * ny)
                 estimates.append(model.grid.pose_at(iyaw, iy, ix))
-        return estimates
+        return volumes, estimates
+
+    def _rnn_sequence(
+        self,
+        seq: RenderedSequence,
+        logits: torch.Tensor,
+        features: torch.Tensor,
+        *,
+        init: str,
+    ) -> list[Pose]:
+        return self.rnn_volumes(seq, logits, features, init=init)[1]
 
     def _pose_logits(
         self,

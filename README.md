@@ -183,6 +183,26 @@ several thresholds, and the first frame after which the estimate stays within
 16 px / 10° for three consecutive frames (recovery). Results are JSON; a compact
 table is printed and `summary_table()` is available programmatically.
 
+### Replay video
+
+Render one trajectory as a synchronised three-panel video: the map with the true
+pose (green) and the estimate (red), the corrupted BEV observation the model
+actually received, and the method's posterior over position (max over heading).
+
+```bash
+python -m bev2loc.replay \
+    --scenario seen_moderate --method learned+filter \
+    --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
+    --rnn-checkpoint outputs/checkpoints/rnn_yaw.pt \
+    --out outputs/videos/bev2loc_replay.mp4 \
+    --still outputs/videos/bev2loc_replay_frame.png
+```
+
+`--method` accepts `classical`, `classical+filter`, `learned`, `learned+filter`
+and `rnn`. `--show-mask` tints unreliable pixels in the observation panel.
+Checkpoints default to the ones above; the generated sample is in
+`outputs/videos/bev2loc_replay.mp4`.
+
 ### Reference results
 
 Three independent trajectory seeds per scenario, 40 frames each, with the
