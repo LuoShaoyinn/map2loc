@@ -4,7 +4,7 @@ A likelihood volume is a dense tensor over ``(yaw, y, x)``.  ``x`` and ``y``
 index a regular lattice in map pixel coordinates; ``yaw`` indexes a set of
 equally spaced headings.  Every matcher and every temporal model in this
 package speaks this representation, which is what makes the comparison in
-:mod:`bev2loc.evaluation` exactly like-for-like.
+:mod:`map2loc.evaluation` exactly like-for-like.
 """
 
 from __future__ import annotations

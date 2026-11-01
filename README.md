@@ -1,4 +1,4 @@
-# bev2loc — BEV-to-map localization
+# map2loc — BEV-to-map localization
 
 A known bird's-eye-view (BEV) map (e.g. `res/example.png`) is given. At test
 time the agent only sees a small, heavily degraded crop of it. This package
@@ -15,20 +15,20 @@ Branch layout:
 
 ```
 res/example.png              the fixed map
-bev2loc/map.py               map loading, coordinate frames, regions
-bev2loc/trajectory.py        smooth waypoint / random-walk pose sequences
-bev2loc/observation.py       crop windows out of the map, exact ground truth
-bev2loc/augment.py           geometry, noise, scratches, occlusions + validity mask
-bev2loc/tensor_generator.py  batched on-device renderer for online training
-bev2loc/dataset.py           on-the-fly torch Datasets (single frame / sequence)
-bev2loc/matching/grid.py     shared (x, y, yaw) grid and likelihood volumes
-bev2loc/matching/classical.py rotation-aware masked NCC baseline
-bev2loc/matching/learned.py  CNN encoders + dense correlation (OrienterNet-style)
-bev2loc/temporal/histogram_filter.py  F3Loc-style SE(2) Bayes filter
-bev2loc/temporal/rnn.py      ConvGRU sequential baseline
-bev2loc/evaluation/          corruption levels, map splits, scenarios, metrics
-bev2loc/train.py             observation / RNN training CLIs
-bev2loc/evaluate.py          benchmark CLI
+map2loc/map.py               map loading, coordinate frames, regions
+map2loc/trajectory.py        smooth waypoint / random-walk pose sequences
+map2loc/observation.py       crop windows out of the map, exact ground truth
+map2loc/augment.py           geometry, noise, scratches, occlusions + validity mask
+map2loc/tensor_generator.py  batched on-device renderer for online training
+map2loc/dataset.py           on-the-fly torch Datasets (single frame / sequence)
+map2loc/matching/grid.py     shared (x, y, yaw) grid and likelihood volumes
+map2loc/matching/classical.py rotation-aware masked NCC baseline
+map2loc/matching/learned.py  CNN encoders + dense correlation (OrienterNet-style)
+map2loc/temporal/histogram_filter.py  F3Loc-style SE(2) Bayes filter
+map2loc/temporal/rnn.py      ConvGRU sequential baseline
+map2loc/evaluation/          corruption levels, map splits, scenarios, metrics
+map2loc/train.py             observation / RNN training CLIs
+map2loc/evaluate.py          benchmark CLI
 ```
 
 ## Quick start (uv)
@@ -36,7 +36,7 @@ bev2loc/evaluate.py          benchmark CLI
 ```bash
 # ROCm machine (this repo was developed on one)
 uv sync --extra rocm
-uv run --extra rocm python -m bev2loc preview --out-dir outputs/previews
+uv run --extra rocm python -m map2loc preview --out-dir outputs/previews
 uv run --extra rocm python -m pytest
 ```
 
@@ -125,24 +125,24 @@ numpy/cv2 `PoseDataset`/`TrajectoryDataset` path for reference.
 
 ```bash
 # 1. Observation model (shared by learned, filter and RNN comparisons)
-python -m bev2loc.train --mode observation --generator tensor \
+python -m map2loc.train --mode observation --generator tensor \
     --steps 3000 --batch-size 8 --corruption mild \
     --out outputs/checkpoints/obs_mild.pt
 
 # Optional robustness fine-tune with occlusions / scratches
-python -m bev2loc.train --mode observation --generator tensor \
+python -m map2loc.train --mode observation --generator tensor \
     --steps 1000 --batch-size 8 --corruption moderate \
     --init-checkpoint outputs/checkpoints/obs_mild.pt \
     --out outputs/checkpoints/obs_moderate.pt
 
 # 2. ConvGRU on frozen observation features
-python -m bev2loc.train --mode rnn --generator tensor \
+python -m map2loc.train --mode rnn --generator tensor \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
     --steps 1200 --batch-size 2 --seq-len 8 --step-stride 6 \
     --out outputs/checkpoints/rnn.pt
 
 # stable heading-refining variant (spatial residual disabled)
-python -m bev2loc.train --mode rnn --generator tensor \
+python -m map2loc.train --mode rnn --generator tensor \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
     --init-checkpoint outputs/checkpoints/rnn.pt --no-spatial-residual \
     --steps 900 --batch-size 2 --seq-len 12 --step-stride 6 \
@@ -160,7 +160,7 @@ The benchmark renders one observation sequence per scenario and feeds the exact
 same images and masks to every method.
 
 ```bash
-python -m bev2loc.evaluate \
+python -m map2loc.evaluate \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
     --rnn-checkpoint outputs/checkpoints/rnn_yaw.pt \
     --repeats 3 \
@@ -190,18 +190,18 @@ pose (green) and the estimate (red), the corrupted BEV observation the model
 actually received, and the method's posterior over position (max over heading).
 
 ```bash
-python -m bev2loc.replay \
+python -m map2loc.replay \
     --scenario seen_moderate --method learned+filter \
     --learned-checkpoint outputs/checkpoints/obs_moderate.pt \
     --rnn-checkpoint outputs/checkpoints/rnn_yaw.pt \
-    --out outputs/videos/bev2loc_replay.mp4 \
-    --still outputs/videos/bev2loc_replay_frame.png
+    --out outputs/videos/map2loc_replay.mp4 \
+    --still outputs/videos/map2loc_replay_frame.png
 ```
 
 `--method` accepts `classical`, `classical+filter`, `learned`, `learned+filter`
 and `rnn`. `--show-mask` tints unreliable pixels in the observation panel.
 Checkpoints default to the ones above; the generated sample is in
-`outputs/videos/bev2loc_replay.mp4`.
+`outputs/videos/map2loc_replay.mp4`.
 
 ### Reference results
 

@@ -1,6 +1,6 @@
 """Batched, GPU-friendly observation generator.
 
-The numpy/cv2 generator in :mod:`bev2loc.observation` is the reference
+The numpy/cv2 generator in :mod:`map2loc.observation` is the reference
 implementation (and the one used for evaluation).  This module renders a whole
 batch of BEV observations with torch operations instead, which keeps online
 training fed while the GPU is busy.  It implements the same geometric model and

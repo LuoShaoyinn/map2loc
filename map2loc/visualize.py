@@ -1,7 +1,7 @@
 """Visual sanity checks for the observation / trajectory infra.
 
 Usage:
-    python -m bev2loc.visualize --map res/example.png --out-dir outputs/previews
+    python -m map2loc.visualize --map res/example.png --out-dir outputs/previews
 """
 
 from __future__ import annotations

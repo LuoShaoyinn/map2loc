@@ -4,11 +4,11 @@ Examples
 --------
 Train the observation matcher (the model shared by all temporal comparisons)::
 
-    python -m bev2loc.train --mode observation --steps 400 --out checkpoints/obs.pt
+    python -m map2loc.train --mode observation --steps 400 --out checkpoints/obs.pt
 
 Then train the ConvGRU on frozen observation features::
 
-    python -m bev2loc.train --mode rnn --learned-checkpoint checkpoints/obs.pt \\
+    python -m map2loc.train --mode rnn --learned-checkpoint checkpoints/obs.pt \\
         --steps 100 --out checkpoints/rnn.pt
 """
 

@@ -2,7 +2,7 @@
 
 Example::
 
-    python -m bev2loc.evaluate --learned-checkpoint checkpoints/obs.pt \\
+    python -m map2loc.evaluate --learned-checkpoint checkpoints/obs.pt \\
         --rnn-checkpoint checkpoints/rnn.pt --out outputs/eval/results.json
 """
 

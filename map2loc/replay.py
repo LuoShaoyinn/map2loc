@@ -10,7 +10,7 @@ Three synchronised panels per frame:
 
 Usage::
 
-    python -m bev2loc.replay --scenario seen_moderate --method learned+filter \\
+    python -m map2loc.replay --scenario seen_moderate --method learned+filter \\
         --learned-checkpoint outputs/checkpoints/obs_moderate.pt \\
         --out outputs/videos/replay.mp4
 """
@@ -214,7 +214,7 @@ def _compose(
     total = len(seq.observations)
 
     title = (
-        f"bev2loc replay | {scenario} | {method} | frame {t + 1}/{total} | "
+        f"map2loc replay | {scenario} | {method} | frame {t + 1}/{total} | "
         f"pos err {path_err:.1f} px | yaw err {yaw_err:.1f} deg"
     )
     bar_h = 46
