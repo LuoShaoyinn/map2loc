@@ -193,7 +193,7 @@ def compose_frame(
         tile(
             overlay_invalid(obs.image, obs.valid_mask),
             "invalid pixels tinted",
-            "red = invalid (map edge + random)",
+            "red = invalid (edge / scratch / random)",
         ),
     ]
 

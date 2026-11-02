@@ -244,7 +244,9 @@ def save_previews(
         f"head=({np.rad2deg(geom.aug.head_pitch):+.1f},"
         f"{np.rad2deg(geom.aug.head_yaw):+.1f})",
         f"sigma={full.photo.get('gauss_sigma', 0):.1f} "
-        f"invalid={full.photo.get('invalid_frac', 0):.3f}",
+        f"pxsigma={full.photo.get('pixel_gauss_sigma', 0):.1f} "
+        f"inv={full.photo.get('invalid_frac', 0):.2f} "
+        f"scr={full.photo.get('n_scratch', 0)}",
     ]
     for arr, stage in zip(stage_imgs, (clean, geom, full)):
         _draw_view_marker(arr, stage, gen)
@@ -325,7 +327,7 @@ def save_previews(
         "invalid tinted",
     ]
     validity_subs = [
-        "gaussian + random invalid",
+        "gaussian + scratches + invalid",
         "pixels that sample the map",
         "coverage AND not invalid",
         "red = cannot trust",
