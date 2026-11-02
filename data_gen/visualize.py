@@ -1,7 +1,7 @@
-"""Visual sanity checks for the observation / trajectory infra.
+"""Visual sanity checks for the camera / noise infra.
 
 Usage:
-    python -m bev2loc.visualize --map res/example.png --out-dir outputs/previews
+    python -m data_gen.visualize --map res/example.png --out-dir outputs/previews
 """
 
 from __future__ import annotations
@@ -12,11 +12,13 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from .augment import draw_mask, overlay_invalid
+from .camera import apply_homography, render_validity
 from .config import GeometryConfig, InfraConfig, PhotometricConfig, TrajectoryConfig
 from .map import FixedMap
 from .observation import ObservationGenerator
 from .trajectory import generate_trajectory
-from .types import Observation, Pose
+from .types import Observation
 
 # RGB palette
 _PALETTE = [
@@ -95,6 +97,32 @@ def montage(
     return out
 
 
+def _draw_view_marker(
+    image: np.ndarray, obs: Observation, generator: ObservationGenerator
+) -> None:
+    """Draw the view centre and the camera's ground point."""
+    h, w = image.shape[:2]
+    cv2.drawMarker(
+        image,
+        (w // 2, h // 2),
+        (255, 60, 60),
+        markerType=cv2.MARKER_CROSS,
+        markerSize=12,
+        thickness=1,
+    )
+    h_map_to_view = generator.map_to_view(obs.pose, obs.aug.scale)
+    cam_px = apply_homography(h_map_to_view, obs.gt_xy[None])[0]
+    if 0 <= cam_px[0] < w and 0 <= cam_px[1] < h:
+        cv2.circle(
+            image,
+            (int(round(cam_px[0])), int(round(cam_px[1]))),
+            4,
+            (0, 255, 0),
+            -1,
+            cv2.LINE_AA,
+        )
+
+
 def draw_trajectory(
     map_: FixedMap,
     traj,
@@ -107,14 +135,14 @@ def draw_trajectory(
     # direction markers
     step = max(1, len(traj) // 20)
     for i in range(0, len(traj), step):
-        x, y, yaw = traj.poses[i]
+        x, y, yaw = traj.poses[i, :3]
         p0 = (int(x), int(y))
         p1 = (int(x + 18 * np.cos(yaw)), int(y + 18 * np.sin(yaw)))
         cv2.arrowedLine(img, p0, p1, (255, 255, 0), 1, cv2.LINE_AA, tipLength=0.35)
 
-    sx, sy, _ = traj.poses[0]
+    sx, sy, _ = traj.poses[0, :3]
     cv2.circle(img, (int(sx), int(sy)), 7, (0, 255, 0), -1, cv2.LINE_AA)
-    ex, ey, _ = traj.poses[-1]
+    ex, ey, _ = traj.poses[-1, :3]
     cv2.circle(img, (int(ex), int(ey)), 7, (0, 0, 255), -1, cv2.LINE_AA)
 
     if observations:
@@ -160,7 +188,9 @@ def save_previews(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     map_ = FixedMap(map_path)
-    gen = ObservationGenerator(map_, cfg.geometry, cfg.photometric)
+    gen = ObservationGenerator(
+        map_, cfg.geometry, cfg.photometric, cfg.measurement
+    )
     rng = np.random.default_rng(seed)
 
     traj = generate_trajectory(map_, cfg.trajectory, n_steps=traj_steps, rng=rng)
@@ -178,20 +208,13 @@ def save_previews(
     images, titles, subs = [], [], []
     for i, obs in zip(idx, obs_list):
         disp = obs.image.copy()
-        c = disp.shape[1] // 2
-        cv2.drawMarker(
-            disp,
-            (c, c),
-            (255, 60, 60),
-            markerType=cv2.MARKER_CROSS,
-            markerSize=10,
-            thickness=1,
-        )
+        _draw_view_marker(disp, obs, gen)
         images.append(disp)
         titles.append(f"t={int(i)}")
         yaw_deg = np.rad2deg((obs.pose.yaw + np.pi) % (2 * np.pi) - np.pi)
         subs.append(
-            f"gt=({obs.gt_xy[0]:.0f},{obs.gt_xy[1]:.0f}) yaw={yaw_deg:.0f}deg"
+            f"gt=({obs.gt_xy[0]:.0f},{obs.gt_xy[1]:.0f}) "
+            f"yaw={yaw_deg:.0f} pitch={np.rad2deg(obs.pose.pitch):.1f}"
         )
     grid = montage(images, titles, subs, cols=4, cell=cfg.geometry.obs_width)
     p = out_dir / "preview_observations.png"
@@ -206,56 +229,50 @@ def save_previews(
     geom = gen.generate(
         pose, np.random.default_rng(seed + 2), geometry=True, photometric=False
     )
-    # prefer a frame that actually contains a visible scratch for the demo
-    full = None
-    for k in range(8):
-        cand = gen.generate(
-            pose,
-            np.random.default_rng(seed + 4 + k),
-            aug=geom.aug,
-            geometry=True,
-            photometric=True,
-        )
-        if full is None or cand.photo.get("n_scratch", 0) > full.photo.get(
-            "n_scratch", 0
-        ):
-            full = cand
+    full = gen.generate(
+        pose,
+        np.random.default_rng(seed + 3),
+        geometry=True,
+        photometric=True,
+        aug=geom.aug,
+    )
     stage_imgs = [clean.image, geom.image, full.image]
-    stage_titles = ["1. nominal crop", "2. + scale/shear/perspective", "3. + noise/scratch/JPEG"]
+    stage_titles = ["1. nominal camera", "2. + zoom/head jitter", "3. + noise / invalid"]
     stage_subs = [
-        f"pose=({pose.x:.0f},{pose.y:.0f})",
-        f"zoom=({geom.aug.scale_x:.2f},{geom.aug.scale_y:.2f}) "
-        f"shear=({geom.aug.shear_x:.2f},{geom.aug.shear_y:.2f})",
+        f"pose=({pose.x:.0f},{pose.y:.0f}) pitch={np.rad2deg(pose.pitch):.1f}",
+        f"scale={geom.aug.scale:.2f} "
+        f"head=({np.rad2deg(geom.aug.head_pitch):+.1f},"
+        f"{np.rad2deg(geom.aug.head_yaw):+.1f})",
         f"sigma={full.photo.get('gauss_sigma', 0):.1f} "
-        f"scratches={full.photo.get('n_scratch', 0)}",
+        f"invalid={full.photo.get('invalid_frac', 0):.3f}",
     ]
-    for arr in stage_imgs:
-        cv2.drawMarker(
-            arr,
-            (arr.shape[1] // 2, arr.shape[0] // 2),
-            (255, 60, 60),
-            markerType=cv2.MARKER_CROSS,
-            markerSize=12,
-            thickness=1,
-        )
+    for arr, stage in zip(stage_imgs, (clean, geom, full)):
+        _draw_view_marker(arr, stage, gen)
     p = out_dir / "preview_augmentation_stages.png"
-    cv2.imwrite(str(p), cv2.cvtColor(montage(stage_imgs, stage_titles, stage_subs, cols=3), cv2.COLOR_RGB2BGR))
+    cv2.imwrite(
+        str(p),
+        cv2.cvtColor(
+            montage(stage_imgs, stage_titles, stage_subs, cols=3),
+            cv2.COLOR_RGB2BGR,
+        ),
+    )
     paths["augmentation"] = p
 
-    # clean geometry-only grid to inspect crop coverage
+    # clean camera views to inspect pose / perspective
     g_imgs, g_titles, g_subs = [], [], []
     for i, obs in zip(idx, obs_list):
         geom_only = gen.generate(
             traj[int(i)],
             np.random.default_rng(int(i) + seed + 100),
-            geometry=True,
+            geometry=False,
             photometric=False,
         )
         g_imgs.append(geom_only.image)
         g_titles.append(f"t={int(i)}")
         g_subs.append(
-            f"zoom=({geom_only.aug.scale_x:.2f},{geom_only.aug.scale_y:.2f}) "
-            f"shear=({geom_only.aug.shear_x:+.2f},{geom_only.aug.shear_y:+.2f})"
+            f"pitch={np.rad2deg(geom_only.pose.pitch):+.1f} "
+            f"roll={np.rad2deg(geom_only.pose.roll):+.1f} "
+            f"cam-centre={np.linalg.norm(geom_only.center_xy - geom_only.gt_xy):.1f}px"
         )
     p = out_dir / "preview_geometry.png"
     cv2.imwrite(
@@ -266,6 +283,62 @@ def save_previews(
         ),
     )
     paths["geometry"] = p
+
+    # validity-mask graph: image with invalid pixels tinted, plus the mask
+    v_imgs, v_titles, v_subs = [], [], []
+    for i, obs in zip(idx[:4], obs_list[:4]):
+        valid = obs.valid_mask
+        map_valid = render_validity(
+            map_.image, gen.view_to_map(obs.pose, obs.aug.scale), cfg.geometry
+        )
+        v_imgs.append(overlay_invalid(obs.image, valid))
+        v_titles.append(f"t={int(i)} invalid tinted")
+        v_subs.append(
+            f"valid={valid.mean():.3f} map={map_valid.mean():.3f}"
+        )
+        v_imgs.append(draw_mask(valid))
+        v_titles.append(f"t={int(i)} valid mask")
+        v_subs.append("white = trustworthy")
+    p = out_dir / "preview_validity.png"
+    cv2.imwrite(
+        str(p),
+        cv2.cvtColor(
+            montage(v_imgs, v_titles, v_subs, cols=4, cell=cfg.geometry.obs_width),
+            cv2.COLOR_RGB2BGR,
+        ),
+    )
+    paths["validity"] = p
+
+    # validity stages for one frame: image, map coverage, combined mask
+    h_view_to_map = gen.view_to_map(full.pose, full.aug.scale)
+    map_valid = render_validity(map_.image, h_view_to_map, cfg.geometry)
+    validity_stages = [
+        full.image,
+        draw_mask(map_valid),
+        draw_mask(full.valid_mask),
+        overlay_invalid(full.image, full.valid_mask),
+    ]
+    validity_titles = [
+        "noisy image",
+        "map coverage",
+        "valid mask",
+        "invalid tinted",
+    ]
+    validity_subs = [
+        "gaussian + random invalid",
+        "pixels that sample the map",
+        "coverage AND not invalid",
+        "red = cannot trust",
+    ]
+    p = out_dir / "preview_validity_stages.png"
+    cv2.imwrite(
+        str(p),
+        cv2.cvtColor(
+            montage(validity_stages, validity_titles, validity_subs, cols=4),
+            cv2.COLOR_RGB2BGR,
+        ),
+    )
+    paths["validity_stages"] = p
 
     return paths
 
@@ -278,11 +351,17 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--traj-steps", type=int, default=700)
     parser.add_argument("--n-windows", type=int, default=12)
     parser.add_argument("--obs-size", type=int, default=256)
-    parser.add_argument("--fov-px", type=float, default=320.0)
+    parser.add_argument("--height", type=float, default=180.0)
+    parser.add_argument("--footprint", type=float, default=120.0)
     args = parser.parse_args(argv)
 
     cfg = InfraConfig(
-        geometry=GeometryConfig(obs_width=args.obs_size, obs_height=args.obs_size, fov_px=args.fov_px),
+        geometry=GeometryConfig(
+            obs_width=args.obs_size,
+            obs_height=args.obs_size,
+            height_px=args.height,
+            footprint_px=args.footprint,
+        ),
         photometric=PhotometricConfig(),
         trajectory=TrajectoryConfig(),
     )
@@ -295,7 +374,7 @@ def main(argv: list[str] | None = None) -> None:
         n_windows=args.n_windows,
     )
     for name, p in paths.items():
-        print(f"{name:>14}: {p}")
+        print(f"{name:>16}: {p}")
 
 
 if __name__ == "__main__":
