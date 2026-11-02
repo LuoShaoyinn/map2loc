@@ -1,7 +1,7 @@
 [project]
-name = "bev2loc"
+name = "data_gen"
 version = "0.1.0"
-description = "bev2loc: procedural trajectories and corrupted BEV observations"
+description = "data_gen: procedural camera trajectories and noisy ground-plane observations"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 
@@ -17,7 +17,8 @@ metal = ["torch"]
 rocm = ["torch", "triton"]
 
 [project.scripts]
-bev2loc-preview = "bev2loc.visualize:main"
+data-gen-preview = "data_gen.visualize:main"
+data-gen-video = "data_gen.video:main"
 
 [dependency-groups]
 dev = ["pytest"]
@@ -61,7 +62,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["bev2loc"]
+packages = ["data_gen"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

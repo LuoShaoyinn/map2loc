@@ -23,7 +23,7 @@ from torch.utils.data import Dataset
 from .config import InfraConfig
 from .map import FixedMap, Region
 from .observation import ObservationGenerator
-from .trajectory import generate_trajectory
+from .trajectory import generate_trajectory, sample_pose
 from .types import Observation
 
 
@@ -43,6 +43,7 @@ def _to_tensor_image(image: np.ndarray, cfg: InfraConfig) -> torch.Tensor:
 def _targets(obs: Observation, map_: FixedMap) -> dict[str, torch.Tensor]:
     pos = map_.normalize_xy(obs.gt_xy)
     yaw = float(obs.pose.yaw)
+    pose = obs.pose.as_array()
     return {
         "pos": torch.from_numpy(pos.astype(np.float32)),
         "pos_px": torch.from_numpy(obs.gt_xy.astype(np.float32)),
@@ -50,27 +51,32 @@ def _targets(obs: Observation, map_: FixedMap) -> dict[str, torch.Tensor]:
         "yaw_sincos": torch.tensor(
             [np.sin(yaw), np.cos(yaw)], dtype=torch.float32
         ),
-        "pose_px": torch.tensor(
-            [obs.pose.x, obs.pose.y, obs.pose.yaw], dtype=torch.float32
+        "pitch": torch.tensor([obs.pose.pitch], dtype=torch.float32),
+        "roll": torch.tensor([obs.pose.roll], dtype=torch.float32),
+        # Noisy attitude inputs available to the model.
+        "yaw_input": torch.tensor([obs.yaw_input], dtype=torch.float32),
+        "pitch_input": torch.tensor([obs.pitch_input], dtype=torch.float32),
+        "yaw_input_sincos": torch.tensor(
+            [np.sin(obs.yaw_input), np.cos(obs.yaw_input)], dtype=torch.float32
         ),
+        "pose_px": torch.from_numpy(pose.astype(np.float32)),
+        "center_px": torch.from_numpy(obs.center_xy.astype(np.float32)),
         "corners": torch.from_numpy(obs.corners.astype(np.float32)),
     }
 
 
-class PoseDataset(Dataset):
-    """Single-frame localization samples."""
-
+class _BaseDataset(Dataset):
     def __init__(
         self,
         map_path: str | Path | FixedMap,
         cfg: InfraConfig | None = None,
         *,
-        length: int = 10_000,
-        seed: int = 0,
-        split: str = "train",
-        region: Region | None = None,
-        geometry: bool = True,
-        photometric: bool = True,
+        length: int,
+        seed: int,
+        split: str,
+        region: Region | None,
+        geometry: bool,
+        photometric: bool,
     ):
         self.cfg = cfg or InfraConfig()
         self.geometry = bool(geometry)
@@ -88,17 +94,52 @@ class PoseDataset(Dataset):
             self.cfg.trajectory.region, self.cfg.trajectory.region_shrink
         )
         self.generator = ObservationGenerator(
-            self.map, self.cfg.geometry, self.cfg.photometric
+            self.map,
+            self.cfg.geometry,
+            self.cfg.photometric,
+            self.cfg.measurement,
         )
 
     def __len__(self) -> int:
         return self.length
 
+
+class PoseDataset(_BaseDataset):
+    """Single-frame localization samples."""
+
+    def __init__(
+        self,
+        map_path: str | Path | FixedMap,
+        cfg: InfraConfig | None = None,
+        *,
+        length: int = 10_000,
+        seed: int = 0,
+        split: str = "train",
+        region: Region | None = None,
+        geometry: bool = True,
+        photometric: bool = True,
+    ):
+        super().__init__(
+            map_path,
+            cfg,
+            length=length,
+            seed=seed,
+            split=split,
+            region=region,
+            geometry=geometry,
+            photometric=photometric,
+        )
+
     def sample(self, index: int) -> Observation:
         rng = np.random.default_rng(
             _seed(self.seed, self.split_offset, index)
         )
-        pose = self.map.random_pose(rng, self.region)
+        pose = sample_pose(
+            self.map,
+            rng,
+            region=self.region,
+            cfg=self.cfg.trajectory,
+        )
         return self.generator.generate(
             pose, rng, geometry=self.geometry, photometric=self.photometric
         )
@@ -115,14 +156,17 @@ class PoseDataset(Dataset):
             "split": self.split,
             "aug": obs.aug.as_dict(),
             "photo": obs.photo,
-            "fov_px": self.cfg.geometry.fov_px,
-            "obs_size": (self.generator.width, self.generator.height),
+            "camera": {
+                "height_px": self.cfg.geometry.height_px,
+                "footprint_px": self.cfg.geometry.footprint_px,
+                "obs_size": (self.generator.width, self.generator.height),
+            },
             "map_size": (self.map.width, self.map.height),
         }
         return item
 
 
-class TrajectoryDataset(Dataset):
+class TrajectoryDataset(_BaseDataset):
     """Short smooth sequences of observations."""
 
     def __init__(
@@ -139,29 +183,18 @@ class TrajectoryDataset(Dataset):
         geometry: bool = True,
         photometric: bool = True,
     ):
-        self.cfg = cfg or InfraConfig()
-        self.geometry = bool(geometry)
-        self.photometric = bool(photometric)
-        self.map = (
-            map_path if isinstance(map_path, FixedMap) else FixedMap(map_path)
+        super().__init__(
+            map_path,
+            cfg,
+            length=length,
+            seed=seed,
+            split=split,
+            region=region,
+            geometry=geometry,
+            photometric=photometric,
         )
-        self.length = int(length)
         self.seq_len = int(seq_len)
         self.step_stride = int(step_stride)
-        self.seed = int(seed)
-        self.split = split
-        self.split_offset = {"train": 0, "val": 1_000_003, "test": 2_000_003}.get(
-            split, 0
-        )
-        self.region = region or self.map.region(
-            self.cfg.trajectory.region, self.cfg.trajectory.region_shrink
-        )
-        self.generator = ObservationGenerator(
-            self.map, self.cfg.geometry, self.cfg.photometric
-        )
-
-    def __len__(self) -> int:
-        return self.length
 
     def __getitem__(self, index: int) -> dict[str, Any]:
         rng = np.random.default_rng(
@@ -198,7 +231,15 @@ class TrajectoryDataset(Dataset):
             "pos_px": torch.stack([t["pos_px"] for t in targets]),
             "yaw": torch.stack([t["yaw"] for t in targets]),
             "yaw_sincos": torch.stack([t["yaw_sincos"] for t in targets]),
+            "pitch": torch.stack([t["pitch"] for t in targets]),
+            "roll": torch.stack([t["roll"] for t in targets]),
+            "yaw_input": torch.stack([t["yaw_input"] for t in targets]),
+            "pitch_input": torch.stack([t["pitch_input"] for t in targets]),
+            "yaw_input_sincos": torch.stack(
+                [t["yaw_input_sincos"] for t in targets]
+            ),
             "pose_px": torch.stack([t["pose_px"] for t in targets]),
+            "center_px": torch.stack([t["center_px"] for t in targets]),
             "corners": torch.stack([t["corners"] for t in targets]),
             "index": torch.tensor(index, dtype=torch.long),
             "meta": {
@@ -206,7 +247,11 @@ class TrajectoryDataset(Dataset):
                 "region": traj.region,
                 "aug": [o.aug.as_dict() for o in obs_list],
                 "photo": [o.photo for o in obs_list],
-                "obs_size": (self.generator.width, self.generator.height),
+                "camera": {
+                    "height_px": self.cfg.geometry.height_px,
+                    "footprint_px": self.cfg.geometry.footprint_px,
+                    "obs_size": (self.generator.width, self.generator.height),
+                },
                 "map_size": (self.map.width, self.map.height),
             },
         }
