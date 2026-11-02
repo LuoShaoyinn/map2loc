@@ -111,11 +111,11 @@ focal_px = height_px * obs_width / footprint_px
 The default `footprint_px = 120` with `height_px = 180` gives a horizontal
 field of view of about **37°** — much narrower than a wide-angle BEV crop.
 
-A random zoom is applied per frame. With a fixed camera height, a zoom is
-exactly equivalent to moving the camera up/down, so this is the only scale
-augmentation needed. Small per-frame **head / gimbal** rotations
-(`head_pitch`, `head_yaw`, `head_roll`) are sampled around zero and added to
-the smooth camera pose before rendering.
+A random zoom in `[0.70, 1.40]` is applied per frame. With a fixed camera
+height, a zoom is exactly equivalent to moving the camera up/down, so this is
+the only scale augmentation needed. Larger per-frame **head / gimbal**
+rotations (`head_pitch=±3°`, `head_yaw=±5°`, `head_roll=±1.5°`) are sampled
+around zero and added to the smooth camera pose before rendering.
 
 The view is rendered by inverse-warping the ground plane through the camera
 homography and clipping to `(obs_height, obs_width)`. Because the scene is
@@ -152,17 +152,26 @@ exact ground truth and the noisy inputs.
 
 ## Noise and validity masks
 
-`PhotometricConfig` is deliberately simple:
+`PhotometricConfig` combines several independent corruption effects:
 
-* one Gaussian sigma per view, applied independently to every pixel/channel;
-* a random fraction of pixels is flagged invalid. Their rendered value is kept;
-  the mask says they cannot be trusted.
+* **per-view Gaussian noise** — one sigma per view, applied independently to
+  every pixel/channel;
+* **per-pixel Gaussian noise** — an extra independent sigma drawn for each
+  pixel, so the noise is heteroscedastic;
+* **random brightness scaling** — a per-view multiplicative scale and additive
+  shift;
+* **random scratches** — thin lines with random orientation, width and
+  brightness delta; they are marked invalid by default;
+* **random invalid pixels** — a configurable Bernoulli rate
+  (`invalid_pixel_rate`, default **0.5**). Their rendered value is kept; the
+  mask says they cannot be trusted.
 
 `Observation.valid_mask` combines:
 
 1. **map coverage** — 1 only where the view pixel samples the known map, 0 for
-   border padding outside the image;
-2. **random invalid pixels** — Bernoulli mask at the sampled fraction.
+   border padding outside the image or rays at/above the horizon;
+2. **random scratches** — 0 on scratch pixels when `scratch_invalid=True`;
+3. **random invalid pixels** — Bernoulli mask at `invalid_pixel_rate`.
 
 Datasets expose the mask as `valid_mask` (single frame) / `valid_masks`
 (sequence), and the previews include a dedicated mask graph.
@@ -233,12 +242,13 @@ camera model and noise on the device and returns `image`, `valid_mask`,
 
 ## What is randomised
 
-**Camera geometry** (`GeometryConfig`): random zoom (equivalent to a height
-change), and small head pitch/yaw/roll jitter around zero. The camera height
-itself is fixed.
+**Camera geometry** (`GeometryConfig`): random zoom in `[0.70, 1.40]`
+(equivalent to a height change), and head pitch/yaw/roll jitter of
+`±3° / ±5° / ±1.5°` around the smooth pose. The camera height itself is fixed.
 
-**Noise** (`PhotometricConfig`): uniform-sigma Gaussian noise plus randomly
-invalid pixels.
+**Noise** (`PhotometricConfig`): per-view Gaussian noise, independent
+per-pixel Gaussian noise, random brightness scaling, random scratches, and a
+configurable invalid-pixel rate (default `0.5`).
 
 **Attitude measurements** (`MeasurementConfig`): Gaussian noise added to the
 ground-truth yaw and pitch that are passed to the model.

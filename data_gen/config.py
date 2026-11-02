@@ -30,16 +30,16 @@ class GeometryConfig:
 
     # Random zoom applied to the rendered view.  With a fixed camera height
     # this is exactly equivalent to changing the height, so it is the only
-    # scale augmentation needed.
-    scale: tuple[float, float] = (0.90, 1.12)
+    # scale augmentation needed.  Deliberately wide.
+    scale: tuple[float, float] = (0.70, 1.40)
 
     # Small per-frame head / gimbal rotations around zero, in degrees.
     # Sampled uniformly in ``[-head_*_deg, +head_*_deg]`` and added to the
     # smooth camera attitude before rendering.  Kept small relative to the
     # oblique base pose.
-    head_pitch_deg: float = 1.0
-    head_yaw_deg: float = 1.0
-    head_roll_deg: float = 0.5
+    head_pitch_deg: float = 3.0
+    head_yaw_deg: float = 5.0
+    head_roll_deg: float = 1.5
 
     # 'background' fills unknown area with the map background colour,
     # 'reflect' mirrors the map, 'zero' fills black.
@@ -48,21 +48,45 @@ class GeometryConfig:
 
 @dataclass
 class PhotometricConfig:
-    """Sensor noise model.
+    """Sensor noise and image-corruption model.
 
-    The request is deliberately simple: independent Gaussian noise over the
-    whole image plus a random subset of pixels that are flagged invalid in
-    the validity mask.  The invalid pixels keep their rendered value; they
-    are *untrustworthy*, not necessarily visually obvious.
+    The model intentionally combines several independent effects:
+
+    * a per-view Gaussian sensor sigma applied to every pixel/channel;
+    * an extra independent Gaussian noise whose sigma is drawn **per pixel**;
+    * per-view multiplicative/additive brightness scaling;
+    * random scratches (thin lines) that can also invalidate pixels;
+    * a configurable fraction of pixels marked invalid in the mask.
+
+    Invalid pixels keep their rendered value; they are *untrustworthy*, not
+    necessarily visually obvious.
     """
 
     enabled: bool = True
 
-    # Additive Gaussian sensor noise, sigma in 8-bit intensity units.
+    # Additive Gaussian sensor noise, sigma in 8-bit intensity units, drawn
+    # once per view and applied independently to every pixel/channel.
     gauss_sigma: tuple[float, float] = (1.0, 10.0)
 
+    # Extra zero-mean Gaussian noise with an independent sigma per pixel
+    # (8-bit intensity units).  This makes the noise heteroscedastic.
+    pixel_gauss_sigma: tuple[float, float] = (0.5, 4.0)
+
     # Fraction of pixels randomly marked invalid in the validity mask.
-    random_invalid_frac: tuple[float, float] = (0.0, 0.010)
+    invalid_pixel_rate: float = 0.5
+
+    # Random per-view brightness scaling: out = out * scale + shift.
+    intensity_scale: tuple[float, float] = (0.85, 1.15)
+    intensity_shift: tuple[float, float] = (-8.0, 8.0)
+
+    # Random scratches: thin lines drawn over the view.  They hide the map,
+    # so they are also marked invalid by default.
+    scratch_prob: float = 0.5
+    scratch_count: tuple[int, int] = (1, 3)
+    scratch_width: tuple[int, int] = (1, 2)
+    # Brightness delta of a scratch, in 8-bit units (sign is random).
+    scratch_delta: tuple[float, float] = (25.0, 70.0)
+    scratch_invalid: bool = True
 
 
 @dataclass
@@ -73,8 +97,8 @@ class MeasurementConfig:
     independent Gaussian error.  Position is not given.
     """
 
-    yaw_sigma_deg: float = 2.0
-    pitch_sigma_deg: float = 1.5
+    yaw_sigma_deg: float = 3.5
+    pitch_sigma_deg: float = 2.5
 
 
 @dataclass
@@ -109,18 +133,18 @@ class TrajectoryConfig:
     region: str = "content"
     region_shrink: float = 0.02
     # Small random yaw jitter added every step (hand tremor / heading noise).
-    yaw_jitter_deg: float = 0.15
+    yaw_jitter_deg: float = 0.8
 
     # Smooth pitch curve (radians at runtime, degrees in the config).
     # Pitch is measured from horizontal: 0 looks ahead along the heading,
     # -90 looks straight down.  The camera therefore looks obliquely at the
     # ground, with a smooth tilt inside [-80, 0] degrees.
     pitch_mean_deg: float = -45.0
-    pitch_sigma_deg: float = 20.0
-    pitch_corr: float = 0.99
+    pitch_sigma_deg: float = 25.0
+    pitch_corr: float = 0.985
     pitch_min_deg: float = -80.0
     pitch_max_deg: float = 0.0
-    pitch_max_step_deg: float = 0.25
+    pitch_max_step_deg: float = 0.30
     # Smooth roll curve around zero.
     roll_sigma_deg: float = 1.0
     roll_corr: float = 0.98

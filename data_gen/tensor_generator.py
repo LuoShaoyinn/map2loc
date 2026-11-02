@@ -223,6 +223,80 @@ class TensorObservationGenerator:
         return {"image": img, "valid": valid, "center_xy": centre_px}
 
     # ------------------------------------------------------------ photometry
+    def _draw_scratches(self, img: torch.Tensor, valid: torch.Tensor, gen):
+        """Draw random thin scratches and optionally invalidate them."""
+        cfg = self.photometric
+        b, _, h, w = img.shape
+        dev = self.device
+        diag = math.hypot(h, w)
+        lo, hi = (int(v) for v in cfg.scratch_count)
+        if hi <= 0 or cfg.scratch_prob <= 0.0:
+            return img, valid, 0
+        has = torch.rand(b, device=dev, generator=gen) < cfg.scratch_prob
+        counts = torch.randint(
+            lo, hi + 1, (b,), device=dev, generator=gen
+        ) * has.long()
+        max_count = hi
+        if int(counts.max()) == 0:
+            return img, valid, 0
+
+        ys, xs = torch.meshgrid(
+            torch.arange(h, device=dev, dtype=img.dtype),
+            torch.arange(w, device=dev, dtype=img.dtype),
+            indexing="ij",
+        )
+        X = xs[None]
+        Y = ys[None]
+        drawn = 0
+        for slot in range(max_count):
+            active = (counts > slot).to(img.dtype)[:, None, None]
+            if float(active.sum()) == 0.0:
+                continue
+            centre = torch.rand(b, 2, 1, 1, device=dev, generator=gen)
+            cx = centre[:, 0] * w
+            cy = centre[:, 1] * h
+            angle = torch.rand(b, 1, 1, device=dev, generator=gen) * math.pi
+            half = (
+                torch.empty(b, 1, 1, device=dev).uniform_(
+                    0.5, 1.5, generator=gen
+                )
+                * 0.5
+                * diag
+            )
+            dx = torch.cos(angle) * half
+            dy = torch.sin(angle) * half
+            p0x, p0y = cx - dx, cy - dy
+            p1x, p1y = cx + dx, cy + dy
+            sx, sy = p1x - p0x, p1y - p0y
+            denom = sx * sx + sy * sy + 1e-6
+            t = ((X - p0x) * sx + (Y - p0y) * sy) / denom
+            t = t.clamp(0.0, 1.0)
+            dist2 = (X - (p0x + t * sx)) ** 2 + (
+                Y - (p0y + t * sy)
+            ) ** 2
+            width = torch.empty(b, 1, 1, device=dev).uniform_(
+                cfg.scratch_width[0] - 0.5,
+                cfg.scratch_width[1] + 0.5,
+                generator=gen,
+            )
+            mask = (dist2 <= (width * 0.5) ** 2).to(img.dtype)[:, None] * active
+            delta = (
+                torch.empty(b, 1, 1, device=dev)
+                .uniform_(*cfg.scratch_delta, generator=gen)
+                .div_(255.0)
+            )
+            sign = (
+                torch.randint(0, 2, (b, 1, 1), device=dev, generator=gen)
+                .to(img.dtype)
+                * 2.0
+                - 1.0
+            )
+            img = img + delta * sign * mask
+            if cfg.scratch_invalid:
+                valid = valid * (1.0 - mask)
+            drawn += int((mask > 0).any(dim=(1, 2, 3)).sum())
+        return img, valid, drawn
+
     def _photometric(self, img: torch.Tensor, valid: torch.Tensor, gen):
         cfg = self.photometric
         if not cfg.enabled:
@@ -230,15 +304,33 @@ class TensorObservationGenerator:
         b, _, h, w = img.shape
         dev = self.device
 
-        # Uniform-sigma i.i.d. Gaussian noise.
+        # Random per-view brightness scaling.
+        scale = _uniform(cfg.intensity_scale, gen, (b, 1, 1, 1), dev)
+        shift = _uniform(cfg.intensity_shift, gen, (b, 1, 1, 1), dev) / 255.0
+        img = img * scale + shift
+
+        # Uniform-sigma i.i.d. Gaussian noise per view.
         sigma = _uniform(cfg.gauss_sigma, gen, (b, 1, 1, 1), dev) / 255.0
         img = img + sigma * torch.randn(img.shape, device=dev, generator=gen)
+
+        # Extra independent Gaussian noise with a per-pixel sigma.
+        pixel_sigma = (
+            _uniform(cfg.pixel_gauss_sigma, gen, (b, 1, h, w), dev) / 255.0
+        )
+        img = img + pixel_sigma * torch.randn(
+            img.shape, device=dev, generator=gen
+        )
+
+        img, valid, _ = self._draw_scratches(img, valid, gen)
         img = img.clamp(0.0, 1.0)
 
-        # Randomly invalid pixels.
-        frac = _uniform(cfg.random_invalid_frac, gen, (b, 1, 1, 1), dev)
-        invalid = torch.rand((b, 1, h, w), device=dev, generator=gen) < frac
-        valid = valid * (~invalid).float()
+        # Configurable random invalid pixels.
+        frac = float(min(max(cfg.invalid_pixel_rate, 0.0), 1.0))
+        if frac > 0.0:
+            invalid = torch.rand(
+                (b, 1, h, w), device=dev, generator=gen
+            ) < frac
+            valid = valid * (~invalid).float()
         return img, valid
 
     # ---------------------------------------------------------------- public
