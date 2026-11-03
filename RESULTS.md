@@ -85,13 +85,24 @@ python -m map2loc.replay --device cuda --scenario seen_severe --seq-len 40 \
     --out outputs/videos/replay_seen_severe_learned_filter.mp4
 ```
 
-Artifacts: `docs/replay_seen_severe.mp4` (H.264, 8 s at 5 fps) and
-`docs/replay_seen_severe_poster.png`. Every frame shows the map with the
-ground-truth route, the filtered and per-frame estimates, the raw perspective
-observation, the rectified BEV patch, the map template at the estimate, the
-filter posterior (whole map and zoom), and the position-error history. The same
-command also renders `seen_moderate` (14.6 px / 0.65) and `unseen_map_rot90`
-(7.8 px / 0.725).
+Every frame shows the map with the ground-truth route, the filtered and
+per-frame estimates, the raw perspective observation, the rectified BEV patch,
+the map template at the estimate, the filter posterior (whole map and zoom),
+and the position-error history. The same command also renders `seen_moderate`
+(14.6 px / 0.65) and `unseen_map_rot90` (7.8 px / 0.725).
+
+The videos and poster frames are generated locally under `outputs/` and are
+intentionally not committed. For an unbiased random example set:
+
+```bash
+python -m map2loc.replay --device cuda --random 12 --seed 0 \
+    --learned-checkpoint outputs/checkpoints/obs_bev_long.pt \
+    --out-dir outputs/videos/random
+```
+
+Random examples sample corruption, map variant, seen/unseen region,
+initialisation and distractor frames independently; no example is filtered by
+whether it succeeds.
 
 ## What changed and why
 

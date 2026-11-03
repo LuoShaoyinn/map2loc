@@ -15,6 +15,12 @@ tests/
 scripts/
 refs/
 
+# generated media (never commit)
+*.mp4
+*.webm
+*.mov
+*.gif
+
 # --- Editor / harness state -------------------------------------------------
 .opencode/
 .DS_Store

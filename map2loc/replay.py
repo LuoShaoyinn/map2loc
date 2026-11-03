@@ -561,9 +561,10 @@ def render_replay(
     map_path: str | Path,
     out_path: str | Path,
     *,
-    scenario: str = "seen_moderate",
+    scenario: str | Scenario = "seen_moderate",
     method: str = "learned+filter",
     split: MapSplit | None = None,
+    runner: BenchmarkRunner | None = None,
     cfg: BenchmarkConfig | None = None,
     learned_checkpoint: str | Path | None = None,
     fps: float = 5.0,
@@ -576,14 +577,19 @@ def render_replay(
     cfg = cfg or BenchmarkConfig()
     out_path = Path(out_path)
     split = split or build_map_split(map_path, out_dir=map_variants_dir)
-    runner = BenchmarkRunner(split, cfg, learned_checkpoint=learned_checkpoint)
+    runner = runner or BenchmarkRunner(
+        split, cfg, learned_checkpoint=learned_checkpoint
+    )
 
-    scenarios = {s.name: s for s in default_scenarios(seq_len=seq_len)}
-    if scenario not in scenarios:
-        raise KeyError(
-            f"unknown scenario {scenario!r}; available: {sorted(scenarios)}"
-        )
-    sc: Scenario = scenarios[scenario]
+    if isinstance(scenario, Scenario):
+        sc = scenario
+    else:
+        scenarios = {s.name: s for s in default_scenarios(seq_len=seq_len)}
+        if scenario not in scenarios:
+            raise KeyError(
+                f"unknown scenario {scenario!r}; available: {sorted(scenarios)}"
+            )
+        sc = scenarios[scenario]
     seq = runner._prepare_sequence(sc)
     grid = runner.grid_for(seq.map)
 
@@ -610,7 +616,7 @@ def render_replay(
     yaw_err = np.abs(np.rad2deg(wrap_angle(yaw_inputs - seq.gt_yaw)))
     success = (pos_err < _SUCCESS_PX) & (yaw_err < _SUCCESS_DEG)
     print(
-        f"[replay] {scenario} | {method} | pos median "
+        f"[replay] {sc.name} | {method} | pos median "
         f"{np.median(pos_err):.1f}px, p90 {np.percentile(pos_err, 90):.1f}px, "
         f"success {success.mean():.3f}",
         flush=True,
@@ -633,7 +639,7 @@ def render_replay(
                 t,
                 runner=runner,
                 method=method,
-                scenario_name=scenario,
+                scenario_name=sc.name,
                 cell=cell,
             )
             if poster and t == mid:
@@ -649,6 +655,96 @@ def render_replay(
     return _write_video(frames(), out_path, fps=fps)
 
 
+_CORRUPTIONS = ("clean", "mild", "moderate", "severe", "scratches", "pixel")
+_MAP_KEYS = ("train", "rot90", "mirror", "recolor")
+
+
+def random_scenarios(
+    n: int,
+    *,
+    seed: int = 0,
+    seq_len: int = 40,
+    step_stride: int = 6,
+) -> list[Scenario]:
+    """Sample scenarios uniformly from the benchmark's parameter space.
+
+    Nothing is selected by outcome: corruptions, maps, regions, initialisation
+    and distractor frames are drawn independently, so the example set is an
+    unbiased sample and may include failures.
+    """
+    rng = np.random.default_rng(seed)
+    out: list[Scenario] = []
+    for i in range(int(n)):
+        corruption = _CORRUPTIONS[int(rng.integers(len(_CORRUPTIONS)))]
+        map_key = _MAP_KEYS[int(rng.integers(len(_MAP_KEYS)))]
+        region_key = ("seen", "unseen")[int(rng.integers(2))]
+        init = ("global", "wrong")[int(rng.integers(2))]
+        distractor_frames = 5 if rng.random() < 0.2 else 0
+        out.append(
+            Scenario(
+                name=(
+                    f"random_{i:03d}_{corruption}_{map_key}"
+                    f"_{region_key}_{init}"
+                ),
+                map_key=map_key,
+                region_key=region_key,
+                corruption=corruption,
+                init=init,
+                distractor_frames=distractor_frames,
+                seed=int(rng.integers(0, 1_000_000)),
+                seq_len=int(seq_len),
+                step_stride=int(step_stride),
+            )
+        )
+    return out
+
+
+def render_random_examples(
+    map_path: str | Path,
+    out_dir: str | Path,
+    *,
+    n: int = 10,
+    seed: int = 0,
+    method: str = "learned+filter",
+    cfg: BenchmarkConfig | None = None,
+    learned_checkpoint: str | Path | None = None,
+    fps: float = 5.0,
+    cell: int = 256,
+    poster: bool = True,
+    seq_len: int = 40,
+    step_stride: int = 6,
+    map_variants_dir: str | Path = "outputs/maps",
+) -> list[Path]:
+    """Render ``n`` randomly sampled scenarios into ``out_dir``."""
+    cfg = cfg or BenchmarkConfig()
+    out_dir = Path(out_dir)
+    split = build_map_split(map_path, out_dir=map_variants_dir)
+    runner = BenchmarkRunner(split, cfg, learned_checkpoint=learned_checkpoint)
+    scenarios = random_scenarios(
+        n, seed=seed, seq_len=seq_len, step_stride=step_stride
+    )
+    paths: list[Path] = []
+    for sc in scenarios:
+        out = out_dir / f"{sc.name}.mp4"
+        paths.append(
+            render_replay(
+                map_path,
+                out,
+                scenario=sc,
+                method=method,
+                split=split,
+                runner=runner,
+                cfg=cfg,
+                learned_checkpoint=learned_checkpoint,
+                fps=fps,
+                cell=cell,
+                poster=poster,
+                map_variants_dir=map_variants_dir,
+            )
+        )
+    return paths
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--map", default="res/example.png")
@@ -662,6 +758,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--learned-checkpoint", default="outputs/checkpoints/obs_bev_long.pt"
     )
     p.add_argument("--out", default=None)
+    p.add_argument(
+        "--random",
+        type=int,
+        default=0,
+        help="render N randomly sampled scenarios instead of --scenario",
+    )
+    p.add_argument("--seed", type=int, default=0, help="random-scenario seed")
+    p.add_argument("--out-dir", default="outputs/videos/random")
+    p.add_argument("--step-stride", type=int, default=6)
     p.add_argument("--device", default="auto")
     p.add_argument("--resolution", type=float, default=8.0)
     p.add_argument("--n-yaw", type=int, default=64)
@@ -675,15 +780,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> Path:
+def main(argv: list[str] | None = None) -> Path | list[Path]:
     args = build_parser().parse_args(argv)
     device = args.device
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
-    out = args.out or (
-        f"outputs/videos/replay_{args.scenario}_"
-        f"{args.method.replace('+', '_')}.mp4"
-    )
     cfg = BenchmarkConfig(
         grid_resolution=args.resolution,
         n_yaw=args.n_yaw,
@@ -699,6 +800,30 @@ def main(argv: list[str] | None = None) -> Path:
             f"learned checkpoint not found: {checkpoint}; "
             "use --method classical+filter for a checkpoint-free smoke test"
         )
+    if args.random > 0:
+        paths = render_random_examples(
+            args.map,
+            args.out_dir,
+            n=args.random,
+            seed=args.seed,
+            method=args.method,
+            cfg=cfg,
+            learned_checkpoint=checkpoint,
+            fps=args.fps,
+            cell=args.cell,
+            poster=not args.no_poster,
+            seq_len=args.seq_len,
+            step_stride=args.step_stride,
+            map_variants_dir=args.map_variants_dir,
+        )
+        for p in paths:
+            print(f"wrote {p}")
+        return paths
+
+    out = args.out or (
+        f"outputs/videos/replay_{args.scenario}_"
+        f"{args.method.replace('+', '_')}.mp4"
+    )
     path = render_replay(
         args.map,
         out,

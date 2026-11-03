@@ -384,3 +384,16 @@ python -m map2loc.replay --device cuda \
 
 `--method classical+filter` runs the same renderer without a checkpoint, which
 is handy for a quick smoke test.
+
+To render an unbiased random example set (corruptions, maps, seen/unseen
+regions, initialisation and distractor frames are sampled independently; no
+example is selected by outcome):
+
+```bash
+python -m map2loc.replay --device cuda --random 12 --seed 0 \
+    --learned-checkpoint outputs/checkpoints/obs_bev_long.pt \
+    --out-dir outputs/videos/random
+```
+
+The MP4s and poster frames are generated locally and are intentionally not
+committed to git.
