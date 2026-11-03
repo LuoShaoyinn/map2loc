@@ -44,7 +44,7 @@ from .evaluation.runner import (
     Scenario,
     default_scenarios,
 )
-from .matching.grid import PoseGrid, wrap_angle
+from .matching.grid import wrap_angle
 
 # RGB palette
 _BG = 245
@@ -160,7 +160,7 @@ def _map_panel(
     return img, sx, sy
 
 
-def _heat_overlay(map_: FixedMap, post: np.ndarray, grid: PoseGrid) -> np.ndarray:
+def _heat_overlay(map_: FixedMap, post: np.ndarray) -> np.ndarray:
     """Full-map heat overlay at map resolution (RGB)."""
     prob = np.maximum(np.asarray(post, dtype=np.float32), 1e-12)
     logp = np.log(prob)
@@ -392,7 +392,6 @@ def compose_frame(
     posteriors: list[np.ndarray],
     t: int,
     *,
-    grid: PoseGrid,
     runner: BenchmarkRunner,
     method: str,
     scenario_name: str,
@@ -429,7 +428,7 @@ def compose_frame(
         runner.bev.span_px,
     )
     posterior = np.asarray(posteriors[t], dtype=np.float32)
-    heat = _heat_overlay(map_, posterior, grid)
+    heat = _heat_overlay(map_, posterior)
     post_full, post_zoom = _posterior_panels(map_, heat, gt, est, cell)
 
     errors = np.array(
@@ -632,7 +631,6 @@ def render_replay(
                 per_xy,
                 post_np,
                 t,
-                grid=grid,
                 runner=runner,
                 method=method,
                 scenario_name=scenario,
