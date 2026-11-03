@@ -109,7 +109,7 @@ class BenchmarkConfig:
     roll_residuals_deg: tuple[float, ...] = (0.0,)
     scale_coverage_power: float = 0.5
     filter_sigma_xy_px: float = 3.0
-    filter_global_mix: float = 0.0
+    filter_global_mix: float = 0.05
 
 
 class BenchmarkRunner:
@@ -383,7 +383,9 @@ class BenchmarkRunner:
             estimates.append(filt.best())
         return estimates
 
-    def _poses_from_logits(self, logits: torch.Tensor, grid: PoseGrid) -> list[Pose]:
+    def _poses_from_logits(
+        self, logits: torch.Tensor, grid: PoseGrid, yaws=None
+    ) -> list[Pose]:
         poses = []
         for t in range(logits.shape[0]):
             xy = logits[t]
@@ -391,7 +393,8 @@ class BenchmarkRunner:
             ix = idx % grid.nx
             iy = idx // grid.nx
             xy_px = grid.xy_at(iy, ix)
-            poses.append(Pose(float(xy_px[0]), float(xy_px[1]), 0.0))
+            yaw = 0.0 if yaws is None else float(yaws[t])
+            poses.append(Pose(float(xy_px[0]), float(xy_px[1]), yaw))
         return poses
 
     # ------------------------------------------------------------- scenario
@@ -430,9 +433,7 @@ class BenchmarkRunner:
             learned, _ = self.learned_logits(seq)
 
         def add(name: str, estimates: list[Pose], extra: dict | None = None):
-            gt_yaw = np.array(
-                [o.yaw_input for o in seq.observations], dtype=np.float32
-            )
+            gt_yaw = np.asarray(seq.poses[:, 2], dtype=np.float32)
             errs = sequence_errors(estimates, seq.gt_xy, gt_yaw)
             summary = summarize(errs, recovery_start=int(sc.distractor_frames))
             results["methods"][name] = {
@@ -444,13 +445,16 @@ class BenchmarkRunner:
             if extra:
                 results["methods"][name].update(extra)
 
-        add("classical", self._poses_from_logits(classical, grid))
+        yaw_inputs = np.array(
+            [o.yaw_input for o in seq.observations], dtype=np.float32
+        )
+        add("classical", self._poses_from_logits(classical, grid, yaw_inputs))
         add(
             "classical+filter",
             self.filter_volumes(grid, seq, classical, init=sc.init, seed=sc.seed),
         )
         if learned is not None:
-            add("learned", self._poses_from_logits(learned, grid))
+            add("learned", self._poses_from_logits(learned, grid, yaw_inputs))
             add(
                 "learned+filter",
                 self.filter_volumes(grid, seq, learned, init=sc.init, seed=sc.seed),

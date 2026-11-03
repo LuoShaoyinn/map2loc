@@ -342,7 +342,10 @@ noise, 50 % invalid pixels, scratches and photometric corruption as evaluation.
 Attitude is measured, so the temporal state is only `(x, y)`.
 `XYHistogramFilter` translates the discrete posterior with the available
 ego-motion (expressed in the measured heading frame), blurs it, and multiplies
-in the yaw-marginalised image likelihood in log space. This removes the
+in the yaw-marginalised image likelihood in log space. A small global-mixing
+term (`global_mix`, default 5 %) resets part of the posterior to each frame's
+global likelihood, which lets the filter escape a wrong lock after distractor
+frames without discarding the temporal evidence. This removes the
 180°-symmetry failure mode of searching full headings.
 
 ### Train and evaluate
