@@ -76,12 +76,16 @@ class ObservationGenerator:
             height=float(pose.height),
         )
 
-    def _measure(self, pose: Pose, rng: np.random.Generator) -> tuple[float, float]:
+    def _measure(
+        self, pose: Pose, rng: np.random.Generator
+    ) -> tuple[float, float, float]:
         yaw_sigma = np.deg2rad(self.measurement.yaw_sigma_deg)
         pitch_sigma = np.deg2rad(self.measurement.pitch_sigma_deg)
+        roll_sigma = np.deg2rad(self.measurement.roll_sigma_deg)
         yaw = wrap_angle(pose.yaw + float(rng.normal(0.0, yaw_sigma)))
         pitch = pose.pitch + float(rng.normal(0.0, pitch_sigma))
-        return yaw, pitch
+        roll = pose.roll + float(rng.normal(0.0, roll_sigma))
+        return yaw, pitch, roll
 
     # -------------------------------------------------------------- generate
     def generate(
@@ -160,7 +164,7 @@ class ObservationGenerator:
             # The image centre points at/above the horizon: no ground point.
             center_xy = eff.xy.astype(np.float32)
 
-        yaw_input, pitch_input = self._measure(eff, rng)
+        yaw_input, pitch_input, roll_input = self._measure(eff, rng)
 
         return Observation(
             image=image,
@@ -171,6 +175,7 @@ class ObservationGenerator:
             warp=h_view_to_map,
             yaw_input=yaw_input,
             pitch_input=pitch_input,
+            roll_input=roll_input,
             aug=aug,
             photo=photo,
             valid_mask=valid_mask.astype(np.float32),
@@ -209,4 +214,5 @@ class ObservationGenerator:
             "roll": np.array([obs.pose.roll], dtype=np.float32),
             "yaw_input": np.array([obs.yaw_input], dtype=np.float32),
             "pitch_input": np.array([obs.pitch_input], dtype=np.float32),
+            "roll_input": np.array([obs.roll_input], dtype=np.float32),
         }

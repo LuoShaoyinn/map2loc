@@ -89,6 +89,7 @@ class Observation:
     # Noisy attitude inputs available to the model: ground truth + N(0, s).
     yaw_input: float = 0.0
     pitch_input: float = 0.0
+    roll_input: float = 0.0
     aug: Augmentation = field(default_factory=Augmentation)
     photo: dict[str, Any] = field(default_factory=dict)
     # (H, W) float mask, 1 = trustworthy map content, 0 = unreliable
@@ -109,6 +110,7 @@ class Observation:
             "corners": self.corners,
             "yaw_input": self.yaw_input,
             "pitch_input": self.pitch_input,
+            "roll_input": self.roll_input,
             "aug": self.aug.as_dict(),
             "photo": self.photo,
             "valid_frac": None

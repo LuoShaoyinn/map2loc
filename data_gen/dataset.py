@@ -56,6 +56,7 @@ def _targets(obs: Observation, map_: FixedMap) -> dict[str, torch.Tensor]:
         # Noisy attitude inputs available to the model.
         "yaw_input": torch.tensor([obs.yaw_input], dtype=torch.float32),
         "pitch_input": torch.tensor([obs.pitch_input], dtype=torch.float32),
+        "roll_input": torch.tensor([obs.roll_input], dtype=torch.float32),
         "yaw_input_sincos": torch.tensor(
             [np.sin(obs.yaw_input), np.cos(obs.yaw_input)], dtype=torch.float32
         ),

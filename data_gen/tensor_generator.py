@@ -249,7 +249,7 @@ class TensorObservationGenerator:
         Y = ys[None]
         drawn = 0
         for slot in range(max_count):
-            active = (counts > slot).to(img.dtype)[:, None, None]
+            active = (counts > slot).to(img.dtype)[:, None, None, None]
             if float(active.sum()) == 0.0:
                 continue
             centre = torch.rand(b, 2, 1, 1, device=dev, generator=gen)
@@ -281,12 +281,12 @@ class TensorObservationGenerator:
             )
             mask = (dist2 <= (width * 0.5) ** 2).to(img.dtype)[:, None] * active
             delta = (
-                torch.empty(b, 1, 1, device=dev)
+                torch.empty(b, 1, 1, 1, device=dev)
                 .uniform_(*cfg.scratch_delta, generator=gen)
                 .div_(255.0)
             )
             sign = (
-                torch.randint(0, 2, (b, 1, 1), device=dev, generator=gen)
+                torch.randint(0, 2, (b, 1, 1, 1), device=dev, generator=gen)
                 .to(img.dtype)
                 * 2.0
                 - 1.0
@@ -376,14 +376,18 @@ class TensorObservationGenerator:
         if measurement is not None:
             yaw_sigma = math.radians(measurement.yaw_sigma_deg)
             pitch_sigma = math.radians(measurement.pitch_sigma_deg)
+            roll_sigma = math.radians(measurement.roll_sigma_deg)
         else:
-            yaw_sigma = pitch_sigma = 0.0
+            yaw_sigma = pitch_sigma = roll_sigma = 0.0
         yaw_input = _wrap_torch(
             eff[:, 2]
             + yaw_sigma
             * torch.randn(b, device=self.device, generator=gen)
         )
         pitch_input = eff[:, 3] + pitch_sigma * torch.randn(
+            b, device=self.device, generator=gen
+        )
+        roll_input = eff[:, 4] + roll_sigma * torch.randn(
             b, device=self.device, generator=gen
         )
 
@@ -398,6 +402,7 @@ class TensorObservationGenerator:
             "roll": eff[:, 4],
             "yaw_input": yaw_input,
             "pitch_input": pitch_input,
+            "roll_input": roll_input,
             "pose": eff,
             "scale": scale,
         }

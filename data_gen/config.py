@@ -97,8 +97,9 @@ class MeasurementConfig:
     independent Gaussian error.  Position is not given.
     """
 
-    yaw_sigma_deg: float = 3.5
-    pitch_sigma_deg: float = 2.5
+    yaw_sigma_deg: float = 5.0
+    pitch_sigma_deg: float = 5.0
+    roll_sigma_deg: float = 5.0
 
 
 @dataclass
