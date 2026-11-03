@@ -32,7 +32,6 @@ import cv2
 import numpy as np
 import torch
 
-from data_gen.camera import wrap_angle
 from data_gen.map import FixedMap
 from data_gen.video import _write_video
 from data_gen.visualize import _label_panel
@@ -45,7 +44,7 @@ from .evaluation.runner import (
     Scenario,
     default_scenarios,
 )
-from .matching.grid import PoseGrid
+from .matching.grid import PoseGrid, wrap_angle
 
 # RGB palette
 _BG = 245
@@ -165,7 +164,9 @@ def _heat_overlay(map_: FixedMap, post: np.ndarray, grid: PoseGrid) -> np.ndarra
     """Full-map heat overlay at map resolution (RGB)."""
     prob = np.maximum(np.asarray(post, dtype=np.float32), 1e-12)
     logp = np.log(prob)
-    rel = np.clip((logp - logp.max()) / 4.0 + 1.0, 0.0, 1.0)
+    # Keep three decades of the posterior (the filter can be very peaked) and
+    # gamma-brighten the low end so the whole basin of attraction is visible.
+    rel = np.clip((logp - logp.max()) / 3.0 + 1.0, 0.0, 1.0) ** 0.6
     heat = cv2.applyColorMap(
         np.round(rel * 255.0).astype(np.uint8), cv2.COLORMAP_TURBO
     )
@@ -259,7 +260,14 @@ def _error_plot(
     left, right, top, bottom = 34, 10, 12, 26
     w = size - left - right
     h = size - top - bottom
-    ymax = max(50.0, 1.12 * float(np.nanmax(errors[: t + 1])))
+    raw_max = max(50.0, 1.12 * float(np.nanmax(errors[: t + 1])))
+    magnitude = 10.0 ** np.floor(np.log10(raw_max))
+    step = magnitude
+    for mult in (1.0, 2.0, 2.5, 5.0, 10.0):
+        step = mult * magnitude
+        if raw_max / step <= 5.0:
+            break
+    ymax = step * float(np.ceil(raw_max / step))
 
     def pt(i: int, value: float) -> tuple[int, int]:
         x = left + (0 if len(errors) <= 1 else int(round(w * i / (len(errors) - 1))))
@@ -368,7 +376,7 @@ def _map_template(
         map_.image,
         affine,
         (px, px),
-        flags=cv2.INTER_LINEAR,
+        flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
         borderMode=cv2.BORDER_REPLICATE,
     )
 
@@ -464,7 +472,7 @@ def compose_frame(
         tile(
             post_zoom,
             "posterior zoom at GT",
-            "log posterior, 4 decades",
+            "log posterior, 3 decades",
         ),
         tile(
             plot,
@@ -599,6 +607,15 @@ def render_replay(
 
     est_xy = np.stack([e.xy for e in estimates])
     per_xy = np.stack([e.xy for e in per_frame])
+    pos_err = np.linalg.norm(est_xy - seq.gt_xy, axis=1)
+    yaw_err = np.abs(np.rad2deg(wrap_angle(yaw_inputs - seq.gt_yaw)))
+    success = (pos_err < _SUCCESS_PX) & (yaw_err < _SUCCESS_DEG)
+    print(
+        f"[replay] {scenario} | {method} | pos median "
+        f"{np.median(pos_err):.1f}px, p90 {np.percentile(pos_err, 90):.1f}px, "
+        f"success {success.mean():.3f}",
+        flush=True,
+    )
     post_np = [
         p.detach().cpu().numpy() if isinstance(p, torch.Tensor) else np.asarray(p)
         for p in posteriors
