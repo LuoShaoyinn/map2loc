@@ -275,7 +275,7 @@ def _error_plot(
         return (x, y)
 
     # grid + axis labels
-    for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+    for frac in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0):
         value = ymax * frac
         y = top + h - int(round(h * frac))
         cv2.line(img, (left, y), (left + w, y), (225, 225, 225), 1)

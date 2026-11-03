@@ -72,6 +72,27 @@ and yaw error < 10° (yaw is the measured input for every method).
 | recovery_distractor | learned | 398.4 | 576.5 | 0.000 |
 | recovery_distractor | learned+filter | 344.4 | 561.1 | 0.000 |
 
+## Validation video (best method)
+
+`map2loc.replay` replays one benchmark scenario through exactly the same
+rectification, matcher and filter code used by the benchmark. The rendered
+`seen_severe` run reproduces the table above frame for frame: **7.9 px median,
+16.8 px p90, 0.85 success** over 40 frames.
+
+```bash
+python -m map2loc.replay --device cuda --scenario seen_severe --seq-len 40 \
+    --learned-checkpoint outputs/checkpoints/obs_bev_long.pt \
+    --out outputs/videos/replay_seen_severe_learned_filter.mp4
+```
+
+Artifacts: `docs/replay_seen_severe.mp4` (H.264, 8 s at 5 fps) and
+`docs/replay_seen_severe_poster.png`. Every frame shows the map with the
+ground-truth route, the filtered and per-frame estimates, the raw perspective
+observation, the rectified BEV patch, the map template at the estimate, the
+filter posterior (whole map and zoom), and the position-error history. The same
+command also renders `seen_moderate` (14.6 px / 0.65) and `unseen_map_rot90`
+(7.8 px / 0.725).
+
 ## What changed and why
 
 1. **Rectify to BEV using the measured attitude.** The observation is a
