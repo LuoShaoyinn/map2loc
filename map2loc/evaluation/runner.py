@@ -108,6 +108,8 @@ class BenchmarkConfig:
     pitch_residuals_deg: tuple[float, ...] = (-5.0, 0.0, 5.0)
     roll_residuals_deg: tuple[float, ...] = (0.0,)
     scale_coverage_power: float = 0.5
+    filter_sigma_xy_px: float = 3.0
+    filter_global_mix: float = 0.0
 
 
 class BenchmarkRunner:
@@ -347,7 +349,14 @@ class BenchmarkRunner:
         seed: int,
     ) -> list[Pose]:
         """Logits are already position marginals over camera xy."""
-        filt = XYHistogramFilter(grid, FilterConfig(), device=self.device)
+        filt = XYHistogramFilter(
+            grid,
+            FilterConfig(
+                sigma_xy_px=self.cfg.filter_sigma_xy_px,
+                global_mix=self.cfg.filter_global_mix,
+            ),
+            device=self.device,
+        )
         gt0 = Pose(*[float(v) for v in seq.poses[0]])
         if init == "wrong":
             filt.set_prior_pose(

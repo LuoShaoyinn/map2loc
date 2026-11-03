@@ -33,6 +33,10 @@ class FilterConfig:
     sigma_xy_px: float = 3.0
     # Extra inflation applied after each update (prevents overconfidence).
     floor_fraction: float = 1e-4
+    # Fraction of the posterior reset to the current frame's global
+    # likelihood each step.  This lets the filter escape a wrong lock (e.g.
+    # after distractor frames) while still using all temporal evidence.
+    global_mix: float = 0.0
 
 
 class XYHistogramFilter:
@@ -144,6 +148,18 @@ class XYHistogramFilter:
         self.log_prob = torch.log_softmax(self.log_prob.flatten(), dim=0).reshape_as(
             self.log_prob
         )
+        mix = float(self.cfg.global_mix)
+        if mix > 0.0:
+            import math
+
+            cand = torch.log_softmax(lp.flatten(), dim=0).reshape_as(lp)
+            self.log_prob = torch.logaddexp(
+                self.log_prob + math.log1p(-mix),
+                cand + math.log(mix),
+            )
+            self.log_prob = torch.log_softmax(
+                self.log_prob.flatten(), dim=0
+            ).reshape_as(self.log_prob)
 
     @property
     def log_volume(self) -> torch.Tensor:
