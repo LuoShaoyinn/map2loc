@@ -22,6 +22,7 @@ data-gen-video = "data_gen.video:main"
 map2loc-preview = "data_gen.visualize:main"
 map2loc-train = "map2loc.train:main"
 map2loc-evaluate = "map2loc.evaluate:main"
+map2loc-replay = "map2loc.replay:main"
 
 [dependency-groups]
 dev = ["pytest"]

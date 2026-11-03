@@ -347,8 +347,14 @@ class BenchmarkRunner:
         *,
         init: str,
         seed: int,
-    ) -> list[Pose]:
-        """Logits are already position marginals over camera xy."""
+        return_posteriors: bool = False,
+    ) -> list[Pose] | tuple[list[Pose], list[torch.Tensor]]:
+        """Logits are already position marginals over camera xy.
+
+        With ``return_posteriors`` the per-frame ``(ny, nx)`` posterior
+        probabilities are returned as well, which is what the replay renderer
+        draws on the map.
+        """
         filt = XYHistogramFilter(
             grid,
             FilterConfig(
@@ -368,6 +374,7 @@ class BenchmarkRunner:
             )
         rng = np.random.default_rng(seed + 9001)
         estimates: list[Pose] = []
+        posteriors: list[torch.Tensor] = []
         for t in range(len(seq.observations)):
             if t > 0 and self.cfg.use_ego_motion:
                 e = ego_motion_from_poses(
@@ -381,6 +388,10 @@ class BenchmarkRunner:
                 filt._yaw = float(seq.observations[t].yaw_input)
             filt.update(logits[t])
             estimates.append(filt.best())
+            if return_posteriors:
+                posteriors.append(filt.marginal_xy().detach().cpu())
+        if return_posteriors:
+            return estimates, posteriors
         return estimates
 
     def _poses_from_logits(

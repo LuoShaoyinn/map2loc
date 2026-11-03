@@ -365,3 +365,22 @@ python -m map2loc.evaluate --device cuda --seq-len 40 \
 The benchmark scenarios are clean / mild / moderate / severe corruption,
 scratches, pixel dropout, a rotated map, an unseen spatial region, a wrong
 global initialisation, and recovery after distractor frames.
+
+### Validation video
+
+`map2loc.replay` replays one benchmark scenario with the best method
+(`learned+filter`) and writes an MP4 plus a poster frame. Each frame shows the
+map with the ground-truth route, the filtered estimate trail and the per-frame
+estimate dots; the raw perspective observation; the rectified BEV patch that
+the matcher sees; the map template at the estimate; the full-map filter
+posterior and a zoom around the ground truth; and the position-error history.
+
+```bash
+python -m map2loc.replay --device cuda \
+    --scenario seen_moderate \
+    --learned-checkpoint outputs/checkpoints/obs_bev_long.pt \
+    --out outputs/videos/replay_seen_moderate.mp4
+```
+
+`--method classical+filter` runs the same renderer without a checkpoint, which
+is handy for a quick smoke test.
