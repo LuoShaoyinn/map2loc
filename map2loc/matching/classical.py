@@ -49,12 +49,18 @@ class ClassicalNCCMatcher:
         patch_px: int = 164,
         map_px_per_px: float = 2.0,
         temperature: float = 0.10,
+        scale_coverage_power: float = 1.0,
         device: str | torch.device = "cpu",
     ):
         self.grid = grid
         self.patch_px = int(patch_px)
         self.map_px_per_px = float(map_px_per_px)
         self.temperature = float(temperature)
+        # Down-weight scale hypotheses whose rectified patch is only a tiny
+        # sliver of the observation: a handful of pixels can otherwise match
+        # by chance and out-score the correct scale.  The weight is
+        # ``(valid fraction) ** power``; 0 reproduces plain max-over-scales.
+        self.scale_coverage_power = float(scale_coverage_power)
         self.device = torch.device(device)
         t = int(round(self.patch_px * self.map_px_per_px / grid.resolution))
         self.template = t if t % 2 == 1 else t + 1
@@ -168,10 +174,12 @@ class ClassicalNCCMatcher:
             m = m[None]
 
         scores = []
+        coverages = []
         for s in range(p.shape[0]):
             gray = _as_gray(p[s]).to(self.device)
             mask = m[s]
             v_sum = mask.sum().clamp_min(1.0)
+            coverages.append(float(v_sum) / float(mask.numel()))
             gray = (gray - (gray * mask).sum() / v_sum) * mask
             per_yaw = []
             for dyaw in (
@@ -184,7 +192,12 @@ class ClassicalNCCMatcher:
                 tpl = (tpl - (tpl * tmask).sum() / tmask.sum().clamp_min(1.0)) * tmask
                 per_yaw.append(self._ncc(tpl, tmask))
             scores.append(torch.stack(per_yaw, dim=0))
-        scores = torch.stack(scores, dim=0).amax(dim=0)[None]  # 1,R,ny,nx
+        stacked = torch.stack(scores, dim=0)  # S,R,ny,nx
+        if self.scale_coverage_power != 0.0:
+            w = torch.tensor(coverages, device=stacked.device, dtype=stacked.dtype)
+            w = w.clamp_min(1e-3).pow(self.scale_coverage_power)
+            stacked = stacked * w[:, None, None, None]
+        scores = stacked.amax(dim=0)[None]  # 1,R,ny,nx
         if yaw is None:
             yaw_t = torch.zeros(1, device=self.device)
         else:

@@ -95,11 +95,19 @@ class BenchmarkConfig:
     n_yaw: int = 64
     patch_px: int = 164
     map_px_per_px: float = 2.0
+    height_px: float = 180.0
     ego_motion_noise: tuple[float, float, float] = (0.0, 0.0, 0.0)
     use_ego_motion: bool = True
     device: str = "cpu"
     learned_chunk: int = 2
     scales: tuple[float, ...] = SCALE_HYPOTHESES
+    # Measured-attitude uncertainty is 5 deg.  Pitch has the largest effect
+    # through the image-centre lever arm, so search a few residual-pitch
+    # hypotheses and marginalise them.  Roll is largely absorbed by the
+    # residual-yaw template rotation.
+    pitch_residuals_deg: tuple[float, ...] = (-5.0, 0.0, 5.0)
+    roll_residuals_deg: tuple[float, ...] = (0.0,)
+    scale_coverage_power: float = 0.5
 
 
 class BenchmarkRunner:
@@ -152,6 +160,7 @@ class BenchmarkRunner:
                 self.grid_for(map_),
                 patch_px=self.cfg.patch_px,
                 map_px_per_px=self.cfg.map_px_per_px,
+                scale_coverage_power=self.cfg.scale_coverage_power,
                 device=self.device,
             )
             m.set_map(map_)
@@ -189,7 +198,14 @@ class BenchmarkRunner:
         return self._learned[key]
 
     # ---------------------------------------------------------- observation
-    def bev_hypotheses(self, seq: RenderedSequence, idx: int):
+    def bev_hypotheses(
+        self,
+        seq: RenderedSequence,
+        idx: int,
+        *,
+        pitch_offset: float = 0.0,
+        roll_offset: float = 0.0,
+    ):
         """Rectify observation ``idx`` at every focal-scale hypothesis."""
         o = seq.observations[idx]
         patches, masks = [], []
@@ -198,8 +214,8 @@ class BenchmarkRunner:
                 o.image,
                 o.valid_mask,
                 o.yaw_input,
-                o.pitch_input,
-                o.roll_input,
+                o.pitch_input + pitch_offset,
+                o.roll_input + roll_offset,
                 seq_geometry(o),
                 s,
                 self.bev,
@@ -208,8 +224,17 @@ class BenchmarkRunner:
             masks.append(m)
         return np.stack(patches), np.stack(masks)
 
-    def _shift_to_camera(self, vol, obs) -> torch.Tensor:
-        off = centre_offset(obs.yaw_input, obs.pitch_input, 180.0)
+    def _shift_to_camera(
+        self,
+        vol,
+        obs,
+        *,
+        pitch_offset: float = 0.0,
+        roll_offset: float = 0.0,
+    ) -> torch.Tensor:
+        off = centre_offset(
+            obs.yaw_input, obs.pitch_input + pitch_offset, self.cfg.height_px
+        )
         xy = vol.xy_logits().detach().cpu()
         if xy.ndim == 3:
             xy = xy[0]
@@ -217,17 +242,39 @@ class BenchmarkRunner:
 
         return shift_map(xy[None], vol.grid, -float(off[0]), -float(off[1]))[0]
 
+    def attitude_hypotheses(self):
+        """``(dpitch_rad, droll_rad, log_prior)`` residual hypotheses."""
+        import math
+
+        out = []
+        for dp in self.cfg.pitch_residuals_deg:
+            for dr in self.cfg.roll_residuals_deg:
+                # Gaussian prior with the same 5 deg sigma as the measurement.
+                lp = -0.5 * ((dp / 5.0) ** 2 + (dr / 5.0) ** 2)
+                out.append((math.radians(dp), math.radians(dr), lp))
+        return out
+
     # ------------------------------------------------------------ inference
     def classical_logits(self, seq: RenderedSequence) -> torch.Tensor:
         matcher = self._classical_matcher(seq.map)
         out = []
+        hyps = self.attitude_hypotheses()
         with torch.no_grad():
             for i in range(len(seq.observations)):
-                patches, masks = self.bev_hypotheses(seq, i)
-                vol = matcher.match(
-                    patches, masks, yaw=seq.observations[i].yaw_input
-                )
-                out.append(self._shift_to_camera(vol, seq.observations[i]))
+                o = seq.observations[i]
+                per_hyp = []
+                for dp, dr, lp in hyps:
+                    patches, masks = self.bev_hypotheses(
+                        seq, i, pitch_offset=dp, roll_offset=dr
+                    )
+                    vol = matcher.match(patches, masks, yaw=o.yaw_input)
+                    per_hyp.append(
+                        self._shift_to_camera(
+                            vol, o, pitch_offset=dp, roll_offset=dr
+                        )
+                        + lp
+                    )
+                out.append(torch.logsumexp(torch.stack(per_hyp), dim=0))
         return torch.stack(out)
 
     def learned_logits(
@@ -238,33 +285,45 @@ class BenchmarkRunner:
         grid = self.grid_for(seq.map)
         logits: list[torch.Tensor] = []
         feats: list[torch.Tensor] = []
-        n = len(seq.observations)
+        hyps = self.attitude_hypotheses()
         with torch.no_grad():
-            for start in range(0, n, self.cfg.learned_chunk):
-                idx = list(range(start, min(start + self.cfg.learned_chunk, n)))
-                patches, masks = [], []
-                for i in idx:
-                    p, m = self.bev_hypotheses(seq, i)
-                    patches.append(torch.from_numpy(p).permute(0, 3, 1, 2))
-                    masks.append(torch.from_numpy(m))
-                bev = (
-                    torch.stack(patches).float().to(self.device) / 127.5 - 1.0
-                )  # (b,S,3,P,P)
-                vmask = torch.stack(masks).float().to(self.device)
-                out = matcher(bev, map_feats, valid_mask=vmask)
-                yawl = torch.tensor(
-                    [seq.observations[i].yaw_input for i in idx],
-                    device=self.device,
-                )
-                for j, i in enumerate(idx):
+            for i in range(len(seq.observations)):
+                o = seq.observations[i]
+                per_hyp = []
+                for h, (dp, dr, lp) in enumerate(hyps):
+                    patches, masks = self.bev_hypotheses(
+                        seq, i, pitch_offset=dp, roll_offset=dr
+                    )
+                    bev = (
+                        torch.from_numpy(patches)
+                        .permute(0, 3, 1, 2)
+                        .float()
+                        .to(self.device)
+                        / 127.5
+                        - 1.0
+                    )[None]  # (1,S,3,P,P)
+                    vmask = (
+                        torch.from_numpy(masks).float().to(self.device)[None]
+                    )
+                    out = matcher(bev, map_feats, valid_mask=vmask)
+                    yawl = torch.tensor(
+                        [o.yaw_input], device=self.device
+                    )
                     vol = merge_residual_yaw(
-                        out["scores"][j : j + 1],
+                        out["scores"],
                         grid,
-                        yawl[j : j + 1],
+                        yawl,
                         grid.dyaw,
                     )
-                    logits.append(self._shift_to_camera(vol, seq.observations[i]))
-                feats.append(out["features"].detach().cpu())
+                    per_hyp.append(
+                        self._shift_to_camera(
+                            vol, o, pitch_offset=dp, roll_offset=dr
+                        )
+                        + lp
+                    )
+                    if h == 0:
+                        feats.append(out["features"].detach().cpu())
+                logits.append(torch.logsumexp(torch.stack(per_hyp), dim=0))
         return torch.stack(logits), torch.cat(feats)
 
     # -------------------------------------------------------------- methods
