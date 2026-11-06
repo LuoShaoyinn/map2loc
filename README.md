@@ -469,3 +469,57 @@ used an incorrect vertical-FOV interpretation and is retained for comparison.
 renders current GT/estimated positions and raw image-flow arrows without trajectory
 tails. Raw displayed tracks include outliers; the estimator uses the gated subset.
 Replay is 6 fps over settled captures, not continuous real-time walking.
+
+### Random corner routes, input persistence and learned matching
+
+`map2loc.simulator.experiment --route corners --seed 101 --points 32 --out <new-directory>`
+records a seeded route alternating randomized interior waypoints and all four
+corner targets at `(±4.05, ±2.55)` m. It independently varies body yaw, head yaw
+and head pitch (approximately 11–69 degrees downward). `run.json` records the seed,
+waypoints and phases. These remain privileged stop-and-observe trajectories.
+
+`map2loc.simulator.learned_experiment` trains the existing `LearnedMatcher`, an
+OrienterNet-style BEV observation/map encoder and dense correlator. It is not the
+official OrienterNet model. Known head quaternion, calibrated horizontal FOV and
+fixed root height rectify camera images into world-aligned ground patches. Its
+position estimates use no simulator XY or velocity; position labels supervise
+training and score evaluation only. This experiment evaluates per-frame learned
+matching, without the classical optical-flow temporal filter.
+
+Temporal persistence is applied **before BEV rectification**, in camera pixels:
+`G[t] = (1-alpha) * I[t] + alpha * G[t-1]`. Memory resets at each route pass.
+This creates the requested dragging/ghosting in the model's input; it is a
+controlled corruption of sampled frames, not a physically calibrated shutter
+simulation. Training includes clean and alpha=0.6 inputs; evaluation compares
+alpha=0, 0.35 and 0.65 on exactly the same held-out captures.
+
+```bash
+python -m map2loc.simulator.learned_experiment \
+  --train outputs/ursoccerlab/yaw_head48_v1 outputs/ursoccerlab/corners101 \
+  --eval outputs/ursoccerlab/corners202 \
+  --steps 3000 --out outputs/ursoccerlab/learned_corners_3000
+```
+
+The old ellipse and seed 101 provide 160 training frames (320 after adding the
+second corruption variant). Seed 202 supplies 64 held-out frames. The evaluation
+route is distinct, but the field and many viewed regions overlap. Output includes
+checkpoint, loss log, input-corrupted replay videos, per-frame predictions,
+metrics and a manifest. All captures and GPU training run on A843-RX9070xt.
+
+Actual 3,000-step GPU run (`learned_corners_3000`, seed 7):
+
+| Input persistence alpha | Median camera XY error | Mean error | Within 0.5 m |
+| --- | ---: | ---: | ---: |
+| 0 (clean) | 1.634 m | 1.878 m | 29/64 |
+| 0.35 | 1.135 m | 1.702 m | 27/64 |
+| 0.65 | 1.382 m | 2.193 m | 22/64 |
+
+Clean-input corner subset (within 0.8 m of a target, 12 frames): median 4.237 m,
+0/12 within 0.5 m. Clean head-down subset (pitch >50 degrees, 24 frames): median
+3.018 m, 4/24 within 0.5 m. Strong ghosting gives medians 4.152 m and 3.399 m
+on those subsets. These subsets may overlap. Training sampled-batch NLL fell to
+0.0091 at the final step, while held-out errors remained large: fitting this small
+training set does not establish generalization. Intermediate ghosting's lower
+median is not evidence of a general benefit (fewer frames are within 0.5 m).
+A preliminary 300-step run is preserved as `learned_corners_v1`; the final run
+uses a fixed longer budget rather than selecting a checkpoint by held-out score.
