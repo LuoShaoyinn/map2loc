@@ -1,8 +1,9 @@
 """Train/evaluate this repository's OrienterNet-style BEV correlator on URS.
 
-Temporal ghosting is applied in image coordinates before rectification:
-G[t] = (1-alpha)*I[t] + alpha*G[t-1]. This is a controlled persistence
-corruption, not a physical exposure-time model. Memory resets per route pass.
+Dynamic motion blur is applied before rectification using image flow.
+Use --corruption ghost to reproduce the older temporal-persistence experiment.
+Motion blur approximates exposure between sampled views; it is not rendered
+sub-frame ground truth. State resets per route pass.
 """
 import argparse,json,time
 from pathlib import Path
@@ -10,6 +11,7 @@ import cv2
 import numpy as np
 import torch
 from .localize import rotation
+from .motion_blur import blur_from_motion
 from ..matching.learned import LearnedMatcher,LearnedMatcherConfig
 from ..matching.grid import PoseGrid
 
@@ -30,14 +32,19 @@ def rectify(image,quat):
     return patch,mask.astype('float32')
 
 
-def load_route(root,alpha):
+def load_route(root,alpha,corruption="motion"):
     rows=[json.loads(x) for x in (root/'frames.jsonl').read_text().splitlines()]
-    samples=[];ghost=None
+    samples=[];ghost=None;previous=None;previous_quat=None
     for row in rows:
         image=cv2.cvtColor(cv2.imread(str(root/row['image'])),cv2.COLOR_BGR2RGB).astype('float32')
-        if row['index']==0:ghost=None
-        ghost=image if ghost is None else (1-alpha)*image+alpha*ghost
+        if row['index']==0:ghost=None;previous=None;previous_quat=None
         quat=row['state']['camera_imu']['quat']
+        if corruption == 'motion':
+            ghost,stats=blur_from_motion(image,previous,quat,previous_quat,alpha)
+            row['blur_stats']=stats
+        else:
+            ghost=image if ghost is None else (1-alpha)*image+alpha*ghost
+        previous=image;previous_quat=quat
         patch,mask=rectify(ghost,quat)
         # Labels are for training/evaluation only, never passed to inference.
         R=rotation(quat);baseR=rotation(np.roll(row['actual']['rotation_quat_xyzw'],1))
@@ -55,7 +62,7 @@ def tensor_batch(samples,indices,device):
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--train',type=Path,nargs='+',required=True);p.add_argument('--eval',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--steps',type=int,default=300);p.add_argument('--seed',type=int,default=7);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--train',type=Path,nargs='+',required=True);p.add_argument('--eval',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--steps',type=int,default=300);p.add_argument('--seed',type=int,default=7);p.add_argument('--corruption',choices=('motion','ghost'),default='motion');a=p.parse_args()
     if a.eval.resolve() in [r.resolve() for r in a.train]:raise ValueError('Evaluation route must be held out')
     a.out.mkdir(parents=True,exist_ok=False)
     torch.manual_seed(a.seed);np.random.seed(a.seed);torch.set_num_threads(4)
@@ -71,7 +78,7 @@ def main():
     map_tensor=torch.from_numpy(raster).permute(2,0,1)[None].float().to(device)/127.5-1
     train=[]
     for root in a.train:
-        for alpha in (0.,.6):train.extend(load_route(root,alpha))
+        for alpha in (0.,.6):train.extend(load_route(root,alpha,a.corruption))
     opt=torch.optim.AdamW(model.parameters(),lr=.001)
     log=[];start=time.monotonic()
     for step in range(a.steps):
@@ -87,7 +94,7 @@ def main():
     with torch.no_grad():
         mf=model.encode_map(map_tensor)
         for alpha in (0.,.35,.65):
-            samples=load_route(a.eval,alpha);errors=[]
+            samples=load_route(a.eval,alpha,a.corruption);errors=[]
             writer=cv2.VideoWriter(str(a.out/f'replay_alpha{alpha:.2f}.mp4'),cv2.VideoWriter_fourcc(*'mp4v'),6,(1500,760))
             field=cv2.resize(cv2.imread('res/example.png'),(848,624))
             for i,sample in enumerate(samples):
@@ -95,19 +102,19 @@ def main():
                 out=model(bev,mf,valid_mask=mask);idx=int(out['xy_logits'].flatten().argmax())
                 px=np.array([(idx%grid.nx+.5)*16,(idx//grid.nx+.5)*16]);gt=sample[2]
                 err=float(np.linalg.norm(px-gt)/100);errors.append(err)
-                row=sample[4];allpred.append(dict(alpha=alpha,index=row['index'],split=row['split'],image=row['image'],predicted_map_px=px.tolist(),gt_map_px=gt.tolist(),error_m=err))
+                row=sample[4];allpred.append(dict(alpha=alpha,corruption=a.corruption,blur_stats=row.get('blur_stats'),index=row['index'],split=row['split'],image=row['image'],predicted_map_px=px.tolist(),gt_map_px=gt.tolist(),error_m=err))
                 c=np.full((760,1500,3),245,np.uint8);c[60:684,:848]=field
                 def point(v):return (int(v[0]*.8),int(v[1]*.8)+60)
                 cv2.drawMarker(c,point(gt),(0,220,255),cv2.MARKER_CROSS,24,3);cv2.circle(c,point(px),9,(255,200,0),3)
                 c[90:570,860:1500]=cv2.cvtColor(np.clip(sample[3],0,255).astype('uint8'),cv2.COLOR_RGB2BGR)
-                for text,y in [(f'Learned BEV correlator | unseen route seed | input ghost alpha={alpha:.2f}',35),(f'{row["split"]} frame {row["index"]+1} | camera XY error {err:.2f} m',620),('Yellow: GT   Cyan: estimate | simulator quaternion; no velocity input',720)]:
-                    cv2.putText(c,text,(20,y),cv2.FONT_HERSHEY_SIMPLEX,.8,(25,25,25),2,cv2.LINE_AA)
+                for text,y in [(f'Learned BEV correlator | unseen route seed | input {a.corruption} strength={alpha:.2f}',35),(f'{row["split"]} frame {row["index"]+1} | camera XY error {err:.2f} m',620),('Yellow: GT   Cyan: estimate | simulator quaternion; no velocity input',720)]:
+                    cv2.putText(c,text,((875 if y==620 else 20),y),cv2.FONT_HERSHEY_SIMPLEX,(.55 if y==620 else .8),(25,25,25),2,cv2.LINE_AA)
                 writer.write(c)
                 if i==8:cv2.imwrite(str(a.out/f'poster_alpha{alpha:.2f}.png'),c)
             writer.release();e=np.array(errors)
             summary[str(alpha)]=dict(frames=len(e),median_m=float(np.median(e)),mean_m=float(e.mean()),p90_m=float(np.quantile(e,.9)),within_05m=float((e<.5).mean()))
             print(alpha,summary[str(alpha)],flush=True)
     (a.out/'metrics.json').write_text(json.dumps(summary,indent=2));(a.out/'predictions.json').write_text(json.dumps(allpred,indent=2))
-    (a.out/'manifest.json').write_text(json.dumps(dict(method='repository OrienterNet-style LearnedMatcher; not official OrienterNet',train=[str(r) for r in a.train],evaluation=str(a.eval),seed=a.seed,steps=a.steps,device=device,ghost_formula='G[t]=(1-alpha)*I[t]+alpha*G[t-1]; reset per pass',height_assumption_m=.56),indent=2))
+    (a.out/'manifest.json').write_text(json.dumps(dict(method='repository OrienterNet-style LearnedMatcher; not official OrienterNet',train=[str(r) for r in a.train],evaluation=str(a.eval),seed=a.seed,steps=a.steps,device=device,corruption=a.corruption,corruption_definition=('current-frame linear-light exposure integration along attitude-assisted dense image flow; strength is exposure fraction of sample interval' if a.corruption=='motion' else 'G[t]=(1-alpha)*I[t]+alpha*G[t-1]; reset per pass'),height_assumption_m=.56),indent=2))
 
 if __name__=='__main__':main()
