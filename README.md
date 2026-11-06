@@ -440,3 +440,32 @@ python -m map2loc.replay --device cuda --random 12 --seed 0 \
 
 The MP4s and poster frames are generated locally and are intentionally not
 committed to git.
+
+### Quaternion + field-line localization on received images
+
+Run `python -m map2loc.simulator.localize --data outputs/ursoccerlab/yaw_head48_v1 --out outputs/ursoccerlab/line_flow_v2` on the simulator host.
+This geometric baseline projects RGB-extracted white markings onto the ground,
+then searches the supplied map on a 10 cm XY grid. Inputs are RGB, head quaternion
+(wxyz), known fixed root height 0.56 m, and MOS9 camera geometry. It does not read
+query XY, commanded trajectory or simulator velocity for inference. Ground truth
+is read afterwards for camera-XY evaluation (not base-XY evaluation).
+The packaged Unreal camera uses 60 degrees horizontal FOV: `FieldOfView` receives
+the XML `fovy` value directly. Calibration uses focal length 554.26 pixels at 640x480.
+
+Pyramidal Lucas-Kanade feature tracks are checked forward/backward, intersected
+with the ground using successive head attitudes, and robustly reduced to camera
+translation. Rejected flow broadens the temporal prior. No velocity integration
+or assumed movement between teleported poses is used. Height/planarity remain
+assumptions, and non-ground features can still contaminate motion estimates.
+
+Remote actual-image replay `line_flow_v2`: query median 0.0538 m, mean 0.6107 m,
+p90 1.3223 m, 27/48 within 0.5 m; flow accepted on 23/47 transitions.
+Single-frame median is 0.0516 m, so temporal fusion has not improved that metric.
+Reference-pass median is 0.0474 m. Large false matches remain; this is a same-scene
+integration result, not a generalization benchmark. The earlier `line_flow_v1`
+used an incorrect vertical-FOV interpretation and is retained for comparison.
+
+`python -m map2loc.simulator.localization_video --data outputs/ursoccerlab/yaw_head48_v1 --result outputs/ursoccerlab/line_flow_v2`
+renders current GT/estimated positions and raw image-flow arrows without trajectory
+tails. Raw displayed tracks include outliers; the estimator uses the gated subset.
+Replay is 6 fps over settled captures, not continuous real-time walking.
