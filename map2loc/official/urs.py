@@ -86,7 +86,8 @@ def load_route(path, alpha):
         baseR=rotation(np.roll(row['actual']['rotation_quat_xyzw'],1))
         xy=np.array(row['actual']['translation_m'][:2])+(baseR@np.array([-.005,0,.2916]))[:2]+(R@np.array([.06,.05,.045]))[:2]
         samples.append(dict(image=image,camera=camera,uv=torch.tensor(uv_from_xy(xy),dtype=torch.float32),
-                            roll_pitch_yaw=torch.tensor([0.,0.,yaw]),valid=valid,
+                            roll_pitch_yaw=torch.tensor([0.,0.,yaw],dtype=torch.float32),valid=valid,
+                            timestamp=float(row['camera']['sim_time']),
                             identity=dict(route=path.name,split=row['split'],index=row['index'],image=row['image'],alpha=alpha),
                             visible_fraction=float(valid.float().mean())))
     return samples
@@ -102,11 +103,12 @@ def batch(samples, ids, raster, device):
 
 
 def evaluate(model,samples,raster,out):
-    model.eval();records=[]
+    model.eval();records=[];observations=[]
     with torch.no_grad():
         for i,s in enumerate(samples):
             data,labels=batch(samples,[i],raster,'cuda')
             pred=model(data)
+            observations.append(pred['log_probs'][0].cpu().numpy())
             # Report both paper-style full pose search and allowed measured yaw.
             constrained=pred['scores'].clone()
             yaw=labels['roll_pitch_yaw'][:,-1]
@@ -121,6 +123,7 @@ def evaluate(model,samples,raster,out):
                         known_yaw_error_m=float(np.linalg.norm(uvr_known[:2]-gt)/PPM),
                         yaw_error_deg=float(abs((uvr[2]-float(yaw[0])+180)%360-180)),
                         nll=float(model.loss(pred,labels)['total'].mean()),
+                        timestamp=s['timestamp'], measured_yaw_deg=float(yaw[0]),
                         visible_fraction=s['visible_fraction'])
             records.append(record)
     metrics={}
@@ -134,6 +137,7 @@ def evaluate(model,samples,raster,out):
         result['median_yaw_error_deg']=float(np.median([r['yaw_error_deg'] for r in rows]))
         metrics[str(alpha)]=result
     out.mkdir(parents=True,exist_ok=True)
+    np.savez_compressed(out/'observations.npz',log_probs=np.asarray(observations,dtype=np.float32))
     (out/'predictions.json').write_text(json.dumps(records,indent=2))
     (out/'metrics.json').write_text(json.dumps(metrics,indent=2))
     print(out,metrics,flush=True)
