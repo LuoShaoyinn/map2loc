@@ -38,6 +38,7 @@ def blur_from_motion(image, previous, quat, previous_quat, fraction):
     exposure=np.zeros_like(linear)
     # Centered shutter keeps the supplied current quaternion at mid-exposure.
     for t in np.linspace(-fraction/2,fraction/2,samples):
+        t=np.float32(t)
         exposure+=cv2.remap(linear,x+t*flow[:,:,0],y+t*flow[:,:,1],cv2.INTER_LINEAR,borderMode=cv2.BORDER_REFLECT_101)
     exposure/=samples
     srgb=np.where(exposure<=.0031308,12.92*exposure,1.055*np.maximum(exposure,0)**(1/2.4)-.055)
