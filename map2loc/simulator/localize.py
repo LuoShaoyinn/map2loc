@@ -17,7 +17,7 @@ def rotation(q):
 
 
 def ground(uv,R,height):
-    f=240/np.tan(np.deg2rad(30))
+    f=320/np.tan(np.deg2rad(30))
     rays=np.column_stack([np.ones(len(uv)),-(uv[:,0]-319.5)/f,-(uv[:,1]-239.5)/f])@R.T
     good=rays[:,2]<-.08
     xyz=rays*(-height/np.minimum(rays[:,2],-1e-6))[:,None]
