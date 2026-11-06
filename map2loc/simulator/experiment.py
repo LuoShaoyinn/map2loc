@@ -40,6 +40,8 @@ def main():
     p.add_argument('--out', type=Path, required=True)
     p.add_argument('--points', type=int, default=32)
     p.add_argument('--settle', type=float, default=0.4)
+    p.add_argument('--route', choices=('ellipse', 'corners'), default='ellipse')
+    p.add_argument('--seed', type=int, default=0)
     a = p.parse_args()
     if a.points < 4 or a.settle < 0.2:
         p.error('points must be >= 4 and settle >= 0.2 seconds')
@@ -48,6 +50,13 @@ def main():
     robot = RobotClient(a.host, a.port)
     original = checked(admin.get_pose(a.actor))
     records, features = [], []
+    rng = np.random.default_rng(a.seed)
+    corners = np.array([[-4.05,-2.55],[4.05,-2.55],[4.05,2.55],[-4.05,2.55]])
+    rng.shuffle(corners)
+    waypoints = np.array([v for c in corners for v in (rng.uniform([-2,-1.4],[2,1.4]), c)])
+    phase = rng.uniform(0, 2*np.pi, 3)
+    (a.out/'run.json').write_text(json.dumps(dict(route=a.route, seed=a.seed,
+        points=a.points, waypoints=waypoints.tolist(), phases=phase.tolist()), indent=2))
     try:
         # Joint order is obtained from the actual state, never guessed.
         state = None
@@ -71,6 +80,13 @@ def main():
                 yaw = math.atan2(-y, -x) + .6 * math.sin(2*t + .4)
                 head_yaw = .75 * math.sin(3*t + .7) + (.06 if split == 'query' else 0)
                 head_pitch = .28 + .22 * math.sin(2*t + .9)
+                if a.route == 'corners':
+                    u = (i + (.5 if split == 'query' else 0))/a.points*len(waypoints)
+                    j = int(u); alpha = u-j
+                    x,y = (1-alpha)*waypoints[j%len(waypoints)] + alpha*waypoints[(j+1)%len(waypoints)]
+                    yaw = math.atan2(-y,-x) + .85*math.sin(2*t+phase[0])
+                    head_yaw = .85*math.sin(3*t+phase[1])
+                    head_pitch = .7 + .5*math.sin(2*t+phase[2])
                 joints = [0.] * len(names)
                 joints[yaw_idx], joints[pitch_idx] = head_yaw, head_pitch
                 joints[names.index('r_shoulder_roll_joint')] = -1.4
