@@ -174,7 +174,10 @@ def main():
     assert set(incompatible.missing_keys)==reset and not incompatible.unexpected_keys,incompatible
     del ckpt,state
     model=model.cuda()
-    manifest=dict(upstream_commit=subprocess.check_output(['git','-C',str(UPSTREAM),'rev-parse','HEAD'],text=True).strip(),
+    manifest=dict(adapter_commit=subprocess.check_output(['git','-C',str(ROOT),'rev-parse','HEAD'],text=True).strip(),
+                  map_sha256=hashlib.sha256((ROOT/'res/example.png').read_bytes()).hexdigest(),
+                  route_metadata_sha256={str(r):hashlib.sha256((r/'frames.jsonl').read_bytes()).hexdigest() for r in a.train+[a.validation]+a.eval},
+                  upstream_commit=subprocess.check_output(['git','-C',str(UPSTREAM),'rev-parse','HEAD'],text=True).strip(),
                   checkpoint_sha256=hashlib.file_digest(a.checkpoint.open('rb'),'sha256').hexdigest(),
                   model_class=f'{type(model).__module__}.{type(model).__name__}',
                   config=OmegaConf.to_container(conf,resolve=True),reset_parameters=sorted(reset),
@@ -182,7 +185,7 @@ def main():
                   seed=a.seed,steps=a.steps,batch_size=a.batch_size,optimizer='Adam',lr=1e-4,
                   device=torch.cuda.get_device_name(),torch=torch.__version__,
                   supervision='camera XY and yaw only in NLL and metrics; inference receives RGB, intrinsics, semantic map',
-                  sequence='not yet evaluated: official sequence fusion requires an external relative-pose trajectory')
+                  sequence='evaluate cached likelihoods with map2loc.official.sequence; simulated noisy velocity odometry')
     (a.out/'manifest.json').write_text(json.dumps(manifest,indent=2))
     raster=semantic_map();np.save(a.out/'semantic_map.npy',raster.numpy())
     train=[s for r in a.train for alpha in (0.,.04) for s in load_route(r,alpha)]

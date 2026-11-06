@@ -51,15 +51,28 @@ combined with the official network.
   the checkpoint. This bounded fine-tuning run is not the paper's multiday
   training schedule. Route splits share a scene and are not unseen-map tests.
 
-## Sequence scope
+## Official sequence fusion with simulated velocity
 
-The paper's sequence inference requires relative camera poses from an external
-SLAM/odometry system. Hacked URS motion provides no usable velocity. Accurate
-head rotation alone cannot provide relative translation. The initial run here
-is therefore single-image localization. It neither substitutes the earlier
-custom filter nor feeds simulator XY into sequence inference. Official sequence
-fusion remains to be evaluated once an image-derived relative-pose source is
-provided and its uncertainty/scale are documented.
+The user's selected odometry source is real velocity plus noise. Because URS
+hacked motion teleports between poses and reports near-zero horizontal velocity,
+we derive interval-average camera velocity from consecutive optical-center
+poses and received camera timestamps. Independent Gaussian noise with sigma
+0.05 m/s per XY axis is added, then integrated from zero at each pass start.
+Exact head attitude supplies rotation. This is explicitly **simulated noisy
+velocity odometry**, not visual odometry or measured physical velocity.
+Absolute position is never passed into sequence fusion. Its differences are
+used only by this authorized simulated sensor and by evaluation metrics.
+
+`sequence.py` calls upstream `RigidAligner.update`, `compute`, and `transform`
+without changing their likelihood accumulation or coordinate transforms. It
+reports causal prefixes of non-overlapping 10-frame chunks (no future frames).
+The paper also evaluates completed sequences; these causal-prefix aggregate
+metrics are a documented evaluation-protocol adaptation. Both unrestricted
+pose scores and the separately labeled measured-yaw variant are evaluated.
+The upstream rigid alignment treats supplied motion as exact: it does not
+model our injected odometry noise. The seed, velocity draws, relative
+trajectory and noise scale are saved. Chunk boundaries limit drift but lose
+history every 10 frames, matching the selected sequence length.
 
 ## Run on A843-RX9070xt
 
@@ -76,9 +89,20 @@ CUDA_VISIBLE_DEVICES=0 .venv-official/bin/python -m map2loc.official.urs \
   --train outputs/ursoccerlab/corners101 \
   --validation outputs/ursoccerlab/corners202 \
   --eval outputs/ursoccerlab/corners303 outputs/ursoccerlab/corners505_dense \
-  --steps 300 --out outputs/official_orienternet/urs_v1
+  --steps 300 --out outputs/official_orienternet/urs_v2
 ```
 
 MSE is mean squared Euclidean camera XY error, in m², not per-axis MSE.
 Validation uses actual recorded simulator images on the remote GPU. No local
 unit tests or synthetic smoke runs are used.
+
+After observation evaluation completes:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 .venv-official/bin/python -m map2loc.official.sequence \
+  outputs/official_orienternet/urs_v2/evaluation_256rot/corners505_dense \
+  --sigma-mps .05 --seed 17 --window 10 \
+  --out outputs/official_orienternet/urs_v2/sequence505_noise005
+```
+
+The likelihood cache is float32 to preserve the upstream score precision.
