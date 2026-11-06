@@ -497,7 +497,7 @@ alpha=0, 0.35 and 0.65 on exactly the same held-out captures.
 python -m map2loc.simulator.learned_experiment \
   --train outputs/ursoccerlab/yaw_head48_v1 outputs/ursoccerlab/corners101 \
   --eval outputs/ursoccerlab/corners202 \
-  --steps 3000 --out outputs/ursoccerlab/learned_corners_3000
+  --steps 3000 --corruption ghost --out outputs/ursoccerlab/learned_corners_3000
 ```
 
 The old ellipse and seed 101 provide 160 training frames (320 after adding the
@@ -523,3 +523,46 @@ training set does not establish generalization. Intermediate ghosting's lower
 median is not evidence of a general benefit (fewer frames are within 0.5 m).
 A preliminary 300-step run is preserved as `learned_corners_v1`; the final run
 uses a fixed longer budget rather than selecting a checkpoint by held-out score.
+
+
+### Correction: dynamic motion blur instead of persistence
+
+The previous ghost experiment averages colors from old frames and does not model
+exposure blur. The default is now `--corruption motion`; `--corruption ghost`
+retains the old experiment explicitly.
+
+Motion blur uses successive RGB frames and measured head quaternions to estimate
+a spatially varying displacement field. Quaternion compensation aligns the
+previous view before dense DIS optical flow estimates residual displacement.
+Only **current-frame colors** are sampled along that field, averaged in linear
+light over a centered exposure. The previous frame supplies displacement only.
+The effect is applied before rectification and network inference.
+
+Because captures jump between settled poses, exposure strength is a fraction of
+the sampled frame interval, not a calibrated camera shutter in milliseconds.
+Training uses clean images and fraction 0.04; evaluation uses 0, 0.02 and 0.05
+on the same held-out route. The first frame of each pass remains clean. Flow at
+occlusions or across large jumps remains approximate; this does not simulate
+true continuous motion, newly revealed surfaces or rolling shutter. The initial
+0.65 exposure experiment was stopped after image inspection showed excessive
+smearing for these sparse captures.
+
+```bash
+python -m map2loc.simulator.learned_experiment \
+  --train outputs/ursoccerlab/yaw_head48_v1 outputs/ursoccerlab/corners101 \
+  --eval outputs/ursoccerlab/corners202 --corruption motion --steps 3000 \
+  --out outputs/ursoccerlab/learned_motion_short_exposure
+```
+
+Corrected 3,000-step motion-blur experiment on the 64 held-out views:
+
+| Exposure fraction | Median camera XY error | Mean error | Within 0.5 m |
+| --- | ---: | ---: | ---: |
+| 0 (clean) | 0.956 m | 1.916 m | 30/64 |
+| 0.02 | 1.294 m | 1.907 m | 29/64 |
+| 0.05 | 1.257 m | 1.853 m | 29/64 |
+
+These rows use the same newly trained motion-augmented model. They are not a
+fixed-checkpoint comparison against the previous ghost-trained model. Per-frame
+`blur_stats` record the estimated flow and blur-length 95th percentiles in pixels.
+Large localization failures still occur (90th percentile above 4 m).
