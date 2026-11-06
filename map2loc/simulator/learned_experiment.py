@@ -78,7 +78,8 @@ def main():
     map_tensor=torch.from_numpy(raster).permute(2,0,1)[None].float().to(device)/127.5-1
     train=[]
     for root in a.train:
-        for alpha in (0.,.6):train.extend(load_route(root,alpha,a.corruption))
+        for alpha in (0., .04 if a.corruption == 'motion' else .6):
+            train.extend(load_route(root,alpha,a.corruption))
     opt=torch.optim.AdamW(model.parameters(),lr=.001)
     log=[];start=time.monotonic()
     for step in range(a.steps):
@@ -93,7 +94,7 @@ def main():
     model.eval();summary={};allpred=[]
     with torch.no_grad():
         mf=model.encode_map(map_tensor)
-        for alpha in (0.,.35,.65):
+        for alpha in ((0.,.02,.05) if a.corruption == 'motion' else (0.,.35,.65)):
             samples=load_route(a.eval,alpha,a.corruption);errors=[]
             writer=cv2.VideoWriter(str(a.out/f'replay_alpha{alpha:.2f}.mp4'),cv2.VideoWriter_fourcc(*'mp4v'),6,(1500,760))
             field=cv2.resize(cv2.imread('res/example.png'),(848,624))
