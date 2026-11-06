@@ -51,7 +51,7 @@ def fuse(observations, records, odometry, window, known_yaw):
             if known_yaw:
                 score=score.clone()
                 mask_yaw_prior(score[None],torch.stack([yaw,yaw.new_tensor(5)])[None],score.shape[-1])
-            position=torch.tensor(xy,device='cuda',dtype=torch.float64)
+            position=torch.tensor(xy,device='cuda',dtype=torch.float32)
             aligner.update(score,canvas,position,yaw)
             if not torch.isfinite(aligner.belief).any():
                 raise RuntimeError('No feasible sequence alignment; do not silently reset')
