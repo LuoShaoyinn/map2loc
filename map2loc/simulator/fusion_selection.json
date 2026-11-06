@@ -1,0 +1,18 @@
+{
+  "config": {
+    "learned_weight": 1.0,
+    "geometry_temperature": 0.015,
+    "estimator": "mean"
+  },
+  "metrics": {
+    "frames": 192,
+    "mse_m2": 1.2263264656066895,
+    "mean_squared_distance_m2": 2.452652931213379,
+    "rmse_distance_m": 1.5660947561264038,
+    "median_m": 0.10789361596107483,
+    "p90_m": 2.6279304027557373,
+    "within_05m": 0.578125
+  },
+  "validation_data": "outputs/ursoccerlab/corners202",
+  "checkpoint_sha256": "adc320e8804741a6cae2233136ff77b6491d77213d7e1350fdbd597681c07c50"
+}

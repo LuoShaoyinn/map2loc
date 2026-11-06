@@ -566,3 +566,70 @@ These rows use the same newly trained motion-augmented model. They are not a
 fixed-checkpoint comparison against the previous ghost-trained model. Per-frame
 `blur_stats` record the estimated flow and blur-length 95th percentiles in pixels.
 Large localization failures still occur (90th percentile above 4 m).
+
+### MSE optimization with frozen-checkpoint geometric fusion
+
+`map2loc.simulator.optimize` retains the learned checkpoint and scores full-view
+field markings against the map. It penalizes observed lines far from map lines,
+and green observations that contradict map lines. This supplements the learned
+5.12 m BEV crop with geometry from farther visible markings. Inputs remain RGB,
+measured head quaternion, known camera geometry and fixed root height; simulator
+XY and velocity do not enter prediction.
+
+MSE is explicitly `mean((dx_m**2 + dy_m**2)/2)` (m², averaged over two coordinates).
+`mean_squared_distance_m2` is twice that value. Median and p90 Euclidean errors,
+and the fraction within 0.5 m, are also recorded so MSE cannot hide tradeoffs.
+
+The existing seed-202 route is now **validation**, not final test data. The search
+compares 24 geometry/learned combinations and three neural-only expectation
+baselines over clean, 0.02 and 0.05 exposure versions. Validation selects learned
+weight 1, geometry temperature 0.015 m, and posterior-mean prediction. Across all
+192 validation variants, coordinate MSE decreases from 3.828 to 1.226 m². The
+posterior mean can lie between ambiguous modes; this is an MSE-oriented decision,
+not a claim that every output is a single confident match. Best geometry-only
+expectation gives 2.133 m² and best hybrid peak selection 1.695 m² on validation.
+
+```bash
+python -m map2loc.simulator.optimize \
+  --data outputs/ursoccerlab/corners202 \
+  --checkpoint outputs/ursoccerlab/learned_motion_short_exposure/model.pt \
+  --out outputs/ursoccerlab/mse_validation202
+python -m map2loc.simulator.optimize \
+  --data outputs/ursoccerlab/corners303 \
+  --checkpoint outputs/ursoccerlab/learned_motion_short_exposure/model.pt \
+  --selection outputs/ursoccerlab/mse_validation202/selection.json \
+  --out outputs/ursoccerlab/mse_test303
+```
+
+Final evaluation uses newly captured seeds 303 and 404 with 64 frames each. The
+selection file and checkpoint SHA256 are frozen before evaluation. Training data
+and weights are unchanged; baseline and optimized methods consume identical
+blurred images. These are new routes in the same simulator/field, not independent
+environments. Frames and three corruption versions are correlated; no statistical
+significance or broad generalization claim is made. Scores, per-frame predictions,
+selected settings, metric definitions and comparison videos are retained.
+
+Final test results, pooled across seeds 303 and 404 (128 frames per condition):
+
+| Exposure fraction | Baseline MSE | Optimized MSE | Baseline median | Optimized median |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 5.156 m² | 1.673 m² | 1.326 m | 0.591 m |
+| 0.02 | 4.875 m² | 1.586 m² | 1.297 m | 0.421 m |
+| 0.05 | 4.959 m² | 1.554 m² | 1.326 m | 0.451 m |
+
+At exposure 0.05, 52/128 baseline estimates and 65/128 optimized estimates are
+within 0.5 m. The 90th percentile improves from 5.072 to 3.112 m, so significant
+outliers remain. Near-corner frames (22) improve from 9.136 to 3.127 m² MSE;
+head-down frames above 50 degrees (50) improve from 5.573 to 3.187 m². However,
+head-down estimates within 0.5 m decrease from 14/50 to 10/50: lower MSE is not
+uniformly better close-range accuracy. Geometry cannot resolve every ambiguous
+view of plain turf or a single line, and posterior averaging can trade precision
+for smaller catastrophic errors.
+
+The frozen selection is also committed as
+`map2loc/simulator/fusion_selection.json`; use it with `--selection` and the exact
+motion-trained checkpoint (SHA256 recorded in that file). Remote artifacts:
+`outputs/ursoccerlab/mse_validation202`, `mse_test303`, and `mse_test404` under
+`~/workspace/map2loc-urs-experiment`. The local combined video is
+`outputs/ursoccerlab/mse_comparison.mp4`. The two new routes were captured on the
+running simulator; all score evaluation ran on A843-RX9070xt's RX 9070 XT.
