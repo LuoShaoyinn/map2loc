@@ -1,5 +1,48 @@
 # map2loc — attitude-aware BEV localization
 
+## Actual URSoccerLab experiment
+
+`python -m map2loc.simulator.experiment --out outputs/ursoccerlab/run01`
+connects to a running simulator, uses admin `lock_pose` to move the MOS9 robot
+without a gait, scans its head, and records decoded left-eye views. Install the
+URSoccerLab `ursoccerlab_client-0.1.1` wheel into the experiment environment first.
+The defaults target robot `robot_bp0`, robot TCP port 10000, admin port 11000.
+Only run when that robot is available for experiment control.
+
+The route is an ellipse with radii 2.8 m and 1.7 m, at root height 0.56 m,
+looking inward with sinusoidal head yaw/pitch. This is discrete stop-and-observe
+capture, not continuous locomotion. Each pose is held until a camera timestamp
+is at least 0.4 simulation seconds newer than the post-command pose timestamp.
+The original pose is restored and the lock released on normal completion or
+Python exceptions. A forcibly terminated process may require manual unlock.
+
+Outputs contain PNG images, `frames.jsonl` (commands, measured admin poses and
+camera timestamps), `predictions.npz`, and `metrics.json`. The baseline creates
+a visual database from the reference pass and retrieves a location from RGB
+alone for the query pass. Queries are halfway between reference route samples
+and have a 0.06 rad additional head yaw. Query ground truth enters only metrics;
+this does not yet connect real images to the planar-map BEV matcher.
+
+Actual A843-RX9070xt run, 2026-11-06, code `5fe17b1`, 24 frames per pass:
+
+| Metric | Result |
+| --- | ---: |
+| Mean base XY error | 2.458 m |
+| Median base XY error | 2.341 m |
+| 90th percentile error | 4.845 m |
+| Error below 0.5 m | 8/24 |
+| Mean nearest-reference spatial distance | 0.293 m |
+
+Artifacts are on that host at
+`~/workspace/map2loc-urs-experiment/outputs/ursoccerlab/route24_v1`.
+This deterministic same-scene route is an initial integration experiment, not
+evidence of unseen-scene generalization. Received images include arm occlusion;
+global thumbnail retrieval frequently confuses locations on the symmetric field.
+The next localization step is calibrated camera-to-ground rectification and
+field-line matching with attitude inputs, followed by temporal fusion and
+separate routes for evaluation. No local tests or synthetic smoke were run for
+this integration; validation used the running packaged simulator.
+
 A known bird's-eye-view map (e.g. `res/example.png`) is given. At test time the
 agent only ever sees a small, heavily corrupted view from an **oblique
 perspective camera** at a fixed height. Camera yaw, pitch and roll are measured
