@@ -1,5 +1,8 @@
 # map2loc — attitude-aware BEV localization
 
+**Official OrienterNet reproduction:** see [the URSoccerLab adapter](map2loc/official/README.md).
+The older methods and results below are custom baselines, not the official paper implementation.
+
 ## Actual URSoccerLab experiment
 
 `python -m map2loc.simulator.experiment --out outputs/ursoccerlab/run01`

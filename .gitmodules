@@ -1,0 +1,3 @@
+[submodule "third_party/OrienterNet"]
+	path = third_party/OrienterNet
+	url = git@github.com:facebookresearch/OrienterNet.git
