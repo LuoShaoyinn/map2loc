@@ -68,11 +68,13 @@ def main():
                 # Queries lie halfway between reference samples, with perturbed head pose.
                 t = 2 * math.pi * (i + (0.5 if split == 'query' else 0)) / a.points
                 x, y = 2.8 * math.cos(t), 1.7 * math.sin(t)
-                yaw = math.atan2(-y, -x)
-                head_yaw = .4 * math.sin(2*t) + (.06 if split == 'query' else 0)
-                head_pitch = .25 + .12 * math.cos(3*t)
+                yaw = math.atan2(-y, -x) + .6 * math.sin(2*t + .4)
+                head_yaw = .75 * math.sin(3*t + .7) + (.06 if split == 'query' else 0)
+                head_pitch = .28 + .22 * math.sin(2*t + .9)
                 joints = [0.] * len(names)
                 joints[yaw_idx], joints[pitch_idx] = head_yaw, head_pitch
+                joints[names.index('r_shoulder_roll_joint')] = -1.4
+                joints[names.index('l_shoulder_roll_joint')] = 1.4
                 pose = dict(translation_m=[x, y, .56],
                             rotation_quat_xyzw=[0, 0, math.sin(yaw/2), math.cos(yaw/2)],
                             joint_qpos=joints)
@@ -80,8 +82,11 @@ def main():
                 start = checked(admin.get_pose(a.actor))['sim_time_sec']
                 deadline = time.monotonic() + 20
                 frame = None
+                fresh_state = None
                 while frame is None and time.monotonic() < deadline:
                     for kind, value in robot.recv():
+                        if kind == 'state' and value['sim_time'] >= start + a.settle:
+                            fresh_state = value
                         if kind in ('rgb', 'camera'):
                             for im in value:
                                 if im.get('camera_name') == 'left_eye' and im['sim_time'] >= start + a.settle:
@@ -92,12 +97,26 @@ def main():
                 actual = checked(admin.get_pose(a.actor))
                 if np.linalg.norm(np.array(actual['translation_m']) - pose['translation_m']) > .01:
                     raise RuntimeError('Privileged pose did not hold')
+                q = np.asarray(actual['rotation_quat_xyzw'])
+                target_q = np.asarray(pose['rotation_quat_xyzw'])
+                if min(np.linalg.norm(q-target_q), np.linalg.norm(q+target_q)) > .01:
+                    raise RuntimeError('Body orientation did not hold')
+                if fresh_state is None:
+                    raise RuntimeError('No fresh named-joint state for head verification')
+                measured_head = [fresh_state['joints'][n]['qpos'] for n in
+                                 ('head_yaw_joint', 'head_pitch_joint')]
+                if np.max(np.abs(np.array(measured_head)-[head_yaw, head_pitch])) > .02:
+                    raise RuntimeError('Named head joints did not reach commanded angles')
                 rgb = camera_to_rgb(frame)
                 filename = f'{split}_{i:04d}.png'
                 if not cv2.imwrite(str(a.out / filename), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)):
                     raise IOError(filename)
                 row = dict(split=split, index=i, image=filename, command=pose,
-                           actual=actual, camera={k:v for k,v in frame.items() if k not in ('data', '_rgb')})
+                           actual=actual, joint_names=names,
+                           angles=dict(body_yaw_command=yaw, head_yaw_command=head_yaw,
+                                       head_pitch_command=head_pitch, head_measured=measured_head),
+                           state=fresh_state,
+                           camera={k:v for k,v in frame.items() if k not in ('data', '_rgb')})
                 records.append(row)
                 features.append(descriptor(rgb))
                 with (a.out / 'frames.jsonl').open('a') as f:
