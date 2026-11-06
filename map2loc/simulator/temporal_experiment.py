@@ -102,6 +102,10 @@ def main():
         (a.out/'validation_candidates.json').write_text(json.dumps(candidates, indent=2))
     temporal, variances = run_filter(scores, xy, records, motions, config)
     zero, _ = run_filter(scores, xy, records, motions, config, zero_displacement=True)
+    # Isolate history from the filter's softer observation calibration.
+    tempered_cfg = dict(cfg, learned_weight=cfg['learned_weight']*config['observation_weight'],
+                        geometry_temperature=cfg['geometry_temperature']/config['observation_weight'])
+    tempered = predictions(learned, costs, xy, tempered_cfg)
     summary, output = {}, []
     for alpha in (0., .02, .05):
         ids = np.array([r['alpha']==alpha for r in records])
@@ -110,6 +114,7 @@ def main():
         gt_delta = (gt - np.roll(gt, 1, axis=0))/100*np.array([1., -1.])
         motion_error = np.linalg.norm(deltas[valid]-gt_delta[valid],axis=1)
         summary[str(alpha)] = dict(independent=metrics(independent[ids],gt[ids]),
+                                  tempered_independent=metrics(tempered[ids],gt[ids]),
                                   temporal=metrics(temporal[ids],gt[ids]),
                                   zero_displacement=metrics(zero[ids],gt[ids]),
                                   accepted_motion=int(valid.sum()), transitions=int(sum(r['index']>0 for r in np.asarray(records,dtype=object)[ids])),
@@ -119,6 +124,7 @@ def main():
         output.append(dict(alpha=r['alpha'],index=r['index'],split=r['split'],
                            gt_map_px=gt[i].tolist(),independent_map_px=independent[i].tolist(),
                            temporal_map_px=temporal[i].tolist(),zero_displacement_map_px=zero[i].tolist(),
+                           tempered_independent_map_px=tempered[i].tolist(),
                            posterior_variance_m2=variances[i],motion=motions[i]))
     (a.out/'predictions.json').write_text(json.dumps(output,indent=2))
     (a.out/'metrics.json').write_text(json.dumps(summary,indent=2))

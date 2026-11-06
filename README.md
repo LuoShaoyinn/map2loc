@@ -633,3 +633,92 @@ motion-trained checkpoint (SHA256 recorded in that file). Remote artifacts:
 `~/workspace/map2loc-urs-experiment`. The local combined video is
 `outputs/ursoccerlab/mse_comparison.mp4`. The two new routes were captured on the
 running simulator; all score evaluation ran on A843-RX9070xt's RX 9070 XT.
+
+### Causal history over the trajectory
+
+`VisualPositionFilter` (`map2loc/temporal/visual_filter.py`) carries a 2D position
+probability distribution between frames. It is initialized uniformly at each
+route pass, never at the true starting position. Each prediction shifts that
+belief by image-derived camera displacement, spreads uncertainty, then updates
+it with the current learned/geometric likelihood. It uses fractional warps of
+probability mass with zero padding, rather than wrapping map boundaries or
+blurring log probabilities. Prediction returns the posterior mean and variance.
+The API is causal: one `update(log_likelihood, motion)` per incoming frame, with
+no future observations or end-of-trajectory smoothing.
+
+Relative motion comes from two camera images rectified into world-aligned ground
+views using measured head quaternions and known fixed camera-height geometry.
+Masked correlation estimates translation despite changing visible footprints.
+Poor overlap, ambiguous peaks and fewer than 20 line-support cells reject a
+measurement. Missing motion invokes a short decaying extrapolation of the last
+accepted visual increment and larger process uncertainty. Simulator velocities,
+commanded routes and true positions are never motion/filter inputs. Pose labels
+are read afterwards for errors and diagnostic motion accuracy only.
+
+Settings are selected on seed 202 and saved in
+`map2loc/simulator/temporal_selection.json`. The observation checkpoint and fusion
+settings are unchanged. Comparison runs include independent-frame inference and
+a zero-displacement ablation with the same acceptance/noise schedule. The initial
+feature-tracking and low-line-support experiments are retained as diagnostics;
+only the final supported-plane alignment is used by the committed configuration.
+
+```bash
+python -m map2loc.simulator.temporal_experiment \
+  --data outputs/ursoccerlab/corners303 \
+  --scores outputs/ursoccerlab/mse_test303 \
+  --selection map2loc/simulator/temporal_selection.json \
+  --out outputs/ursoccerlab/history_supported303
+```
+
+The `--scores` directory must contain matching frozen observation scores from
+`map2loc.simulator.optimize`. Each blurred image stream is processed in temporal
+order; history resets only at the start of a route pass. The saved manifest states
+causality and permitted inputs, while `motion.json` and `predictions.json` retain
+every accepted/rejected motion and the resulting belief variance.
+
+A new seed-505 route has 96 steps per pass (192 images), with median body movement
+0.373 m between observations, versus 1.377/1.170 m on seeds 303/404. These remain
+privileged stop-and-observe simulator captures; temporal inference respects their
+ordered continuous path, but they do not validate physical walking or continuous
+camera exposure. First-frame initialization and subsequent history are scored
+together without dropping difficult startup frames.
+
+Final causal-history results (coordinate MSE in m²):
+
+| Sequence set | Exposure | Independent MSE | Causal-history MSE |
+| --- | ---: | ---: | ---: |
+| Seeds 303 + 404, 128 frames | 0 | 1.673 | 1.030 |
+| Seeds 303 + 404 | 0.02 | 1.586 | 1.022 |
+| Seeds 303 + 404 | 0.05 | 1.554 | 0.952 |
+| Dense seed 505, 192 frames | 0 | 2.176 | 1.767 |
+| Dense seed 505 | 0.02 | 2.125 | 1.721 |
+| Dense seed 505 | 0.05 | 2.105 | 1.725 |
+
+At exposure 0.05 on the dense route, median error improves from 0.558 to 0.242 m,
+and estimates within 0.5 m increase from 92/192 to 108/192. The p90 error is still
+3.564 m (independent: 3.521 m), so persistent wrong hypotheses remain. Sparse-route
+MSE improves 39%, but median error worsens from 0.451 to 0.598 m and within-0.5-m
+estimates decrease from 65/128 to 62/128. History is not uniformly beneficial.
+
+Controls separate history from calibration and displacement. On the dense route
+at exposure 0.05, independent estimates using the filter's same softened
+likelihood give 1.866 m² MSE; causal history gives 1.725 m². Zeroing motion while
+keeping the same confidence/noise schedule gives 1.723 m²: most of the dense-route
+gain comes from accumulated belief, with no demonstrated MSE gain from motion
+shifts there. On the sparse routes, the zero-displacement control gives 1.121 m²
+versus 0.952 m² with visual motion. All three controls are stored per frame.
+
+Validation chose 0.5 m process sigma for accepted motion, 1.4 m for rejected motion,
+observation weight 0.5, global mixing 0.001, prior exponent 0.8 and decaying visual
+motion carry. These settings remain fixed across test routes. The line-support
+check was motivated by motion errors on validation seed 202. Earlier feature and
+plane-alignment variants are preserved in separate artifact directories rather
+than overwritten. Evaluation on these routes is iterative engineering evidence,
+not a blind statistical generalization study.
+
+Final remote output directories are `history_supported_validation202`,
+`history_supported303`, `history_supported404`, and `history_supported_dense505`
+under `~/workspace/map2loc-urs-experiment/outputs/ursoccerlab`. The local dense-route
+video is `outputs/ursoccerlab/history_dense_comparison.mp4` (yellow GT, red
+independent inference, cyan causal history). No trajectory tail is needed to make
+the estimator temporal: the actual probability state persists between frames.

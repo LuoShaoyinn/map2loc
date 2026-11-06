@@ -1,0 +1,22 @@
+{
+  "config": {
+    "sigma_motion_m": 0.5,
+    "sigma_missing_m": 1.4,
+    "observation_weight": 0.5,
+    "global_mix": 0.001,
+    "history_power": 0.8,
+    "carry_motion": true
+  },
+  "metrics": {
+    "frames": 192,
+    "mse_m2": 0.7146592812972253,
+    "mean_squared_distance_m2": 1.4293185625944507,
+    "rmse_distance_m": 1.195541117065595,
+    "median_m": 0.0999577807415188,
+    "p90_m": 2.388562800489889,
+    "within_05m": 0.609375
+  },
+  "validation_data": "outputs/ursoccerlab/corners202",
+  "fusion_sha256": "55425bdcdc269d42ba3472e17553c9ac7a58168c012f7d367bac7a98efab74ec",
+  "checkpoint_sha256": "adc320e8804741a6cae2233136ff77b6491d77213d7e1350fdbd597681c07c50"
+}
